@@ -93,6 +93,11 @@ export const masterPatchSchema = z.object({
   isDone: z.boolean().optional()
 });
 
+export const masterDeleteSchema = z.object({
+  workspaceId: z.string().uuid(),
+  id: z.string().uuid()
+});
+
 export function parseCsvParam(value: string | null): string[] | undefined {
   if (!value) {
     return undefined;

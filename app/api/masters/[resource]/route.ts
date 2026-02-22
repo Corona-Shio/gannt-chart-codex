@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { masterCreateSchema, masterPatchSchema } from "@/lib/api";
+import { masterCreateSchema, masterDeleteSchema, masterPatchSchema } from "@/lib/api";
 import { getWorkspaceRole, isAdmin, requireUser } from "@/lib/auth";
 
 const resourceMap = {
@@ -30,6 +31,26 @@ type ResourceName = keyof typeof resourceMap;
 
 function parseResource(value: string): ResourceName | null {
   return value in resourceMap ? (value as ResourceName) : null;
+}
+
+async function countReferences(
+  supabase: SupabaseClient,
+  table: "tasks" | "release_dates" | "vendor_rates",
+  column: string,
+  workspaceId: string,
+  id: string
+) {
+  const { count, error } = await supabase
+    .from(table)
+    .select("id", { head: true, count: "exact" })
+    .eq("workspace_id", workspaceId)
+    .eq(column, id);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return count ?? 0;
 }
 
 export async function GET(request: Request, context: { params: Promise<{ resource: string }> }) {
@@ -234,4 +255,90 @@ export async function PATCH(request: Request, context: { params: Promise<{ resou
   }
 
   return NextResponse.json({ data });
+}
+
+export async function DELETE(request: Request, context: { params: Promise<{ resource: string }> }) {
+  const auth = await requireUser();
+  if (auth.error) {
+    return auth.error;
+  }
+
+  const { resource } = await context.params;
+  const target = parseResource(resource);
+  if (!target) {
+    return NextResponse.json({ error: "Unsupported resource" }, { status: 404 });
+  }
+
+  const json = await request.json();
+  const parsed = masterDeleteSchema.safeParse(json);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
+
+  const payload = parsed.data;
+  const role = await getWorkspaceRole(auth.supabase, payload.workspaceId);
+  if (!isAdmin(role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  try {
+    let references = 0;
+
+    if (target === "channels") {
+      const [taskRefs, releaseRefs] = await Promise.all([
+        countReferences(auth.supabase, "tasks", "channel_id", payload.workspaceId, payload.id),
+        countReferences(auth.supabase, "release_dates", "channel_id", payload.workspaceId, payload.id)
+      ]);
+      references = taskRefs + releaseRefs;
+    }
+
+    if (target === "task_types") {
+      const [taskRefs, vendorRateRefs] = await Promise.all([
+        countReferences(auth.supabase, "tasks", "task_type_id", payload.workspaceId, payload.id),
+        countReferences(auth.supabase, "vendor_rates", "task_type_id", payload.workspaceId, payload.id)
+      ]);
+      references = taskRefs + vendorRateRefs;
+    }
+
+    if (target === "assignees") {
+      references = await countReferences(auth.supabase, "tasks", "assignee_id", payload.workspaceId, payload.id);
+    }
+
+    if (target === "task_statuses") {
+      references = await countReferences(auth.supabase, "tasks", "status_id", payload.workspaceId, payload.id);
+    }
+
+    if (references > 0) {
+      return NextResponse.json(
+        { error: `参照中のため削除できません (${references}件)` },
+        { status: 409 }
+      );
+    }
+
+    const table =
+      target === "channels"
+        ? "channels"
+        : target === "task_types"
+          ? "task_types"
+          : target === "task_statuses"
+            ? "task_statuses"
+            : "assignees";
+
+    const { error } = await auth.supabase
+      .from(table)
+      .delete()
+      .eq("id", payload.id)
+      .eq("workspace_id", payload.workspaceId);
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Delete failed" },
+      { status: 500 }
+    );
+  }
 }

@@ -2,15 +2,15 @@
 
 import {
   addDays,
+  addMonths,
   endOfMonth,
   format,
   isValid,
   parseISO,
   startOfMonth,
-  subDays,
-  addMonths
+  subDays
 } from "date-fns";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchJson } from "@/lib/http";
 import { dateRange } from "@/lib/date";
@@ -27,10 +27,25 @@ import type {
   WorkspaceRole
 } from "@/types/domain";
 
-const DAY_WIDTH = 30;
-const LEFT_WIDTH = 700;
+const DAY_WIDTH = 26;
+const TASK_ROW_HEIGHT = DAY_WIDTH;
+const CREATE_ROW_HEIGHT = DAY_WIDTH;
+const BAR_HEIGHT = Math.max(16, DAY_WIDTH - 8);
+const RELEASE_BAND_ROW_HEIGHT = 14;
+const MONTH_ROW_HEIGHT = DAY_WIDTH;
+const DAY_ROW_HEIGHT = DAY_WIDTH;
+const WEEKDAY_ROW_HEIGHT = DAY_WIDTH;
+const TABLE_GAP = 6;
+const TABLE_SIDE_PADDING = 14;
+const TABLE_COLUMN_WIDTHS = [82, 70, 66, 72, 128, 58, 58, 46] as const;
+const LEFT_GRID_TEMPLATE = TABLE_COLUMN_WIDTHS.map((width) => `${width}px`).join(" ");
+const LEFT_WIDTH =
+  TABLE_COLUMN_WIDTHS.reduce((sum, width) => sum + width, 0) + TABLE_GAP * (TABLE_COLUMN_WIDTHS.length - 1) + TABLE_SIDE_PADDING;
+const WEEKDAY_JA = ["日", "月", "火", "水", "木", "金", "土"] as const;
+const RELEASE_ROW_TONES = ["#dfe8f7", "#f0e4d1", "#efe9d7", "#f3e8d7", "#e3ebdd", "#ebe2f2"] as const;
 
 type GroupBy = "channel" | "none";
+type MasterResource = "channels" | "task_types" | "assignees" | "task_statuses";
 
 type Filters = {
   channelId: string;
@@ -58,12 +73,40 @@ type CreateTaskForm = {
   notes: string;
 };
 
+type EditTaskForm = CreateTaskForm & {
+  taskId: string;
+};
+
 type ReleaseForm = {
   channelId: string;
   scriptNo: string;
   scriptTitle: string;
   releaseDate: string;
   label: string;
+};
+
+type TimelineDayCell = {
+  date: string;
+  dayLabel: string;
+  weekdayLabel: string;
+  monthKey: string;
+  monthLabel: string;
+};
+
+type TimelineMonthGroup = {
+  key: string;
+  label: string;
+  startIndex: number;
+  length: number;
+};
+
+type ChannelReleaseBandRow = {
+  channelId: string;
+  label: string;
+  tone: string;
+  maxStack: number;
+  height: number;
+  placeholder?: boolean;
 };
 
 type MasterState = {
@@ -80,6 +123,8 @@ type BarInteraction = {
   baseStart: string;
   baseEnd: string;
   offsetDays: number;
+  moved: boolean;
+  lastIndex: number;
 };
 
 type LaneInteraction = {
@@ -108,9 +153,24 @@ function today() {
   return fmtDate(new Date());
 }
 
-function toDateLabel(dateString: string) {
+function toMonthLabel(dateString: string) {
   const parsed = parseISO(dateString);
-  return isValid(parsed) ? format(parsed, "M/d") : dateString;
+  return isValid(parsed) ? format(parsed, "M月") : dateString;
+}
+
+function toDayLabel(dateString: string) {
+  const parsed = parseISO(dateString);
+  return isValid(parsed) ? format(parsed, "d") : dateString;
+}
+
+function toWeekdayLabel(dateString: string) {
+  const parsed = parseISO(dateString);
+  return isValid(parsed) ? WEEKDAY_JA[parsed.getDay()] : "";
+}
+
+function toMonthDayLabel(dateString: string) {
+  const parsed = parseISO(dateString);
+  return isValid(parsed) ? format(parsed, "M月 d日") : dateString;
 }
 
 export function ScheduleDashboard({
@@ -146,6 +206,7 @@ export function ScheduleDashboard({
 
   const [createDraft, setCreateDraft] = useState<CreateDraft | null>(null);
   const [createForm, setCreateForm] = useState<CreateTaskForm | null>(null);
+  const [editForm, setEditForm] = useState<EditTaskForm | null>(null);
   const [releaseForm, setReleaseForm] = useState<ReleaseForm>({
     channelId: "",
     scriptNo: "",
@@ -157,6 +218,7 @@ export function ScheduleDashboard({
   const [laneInteraction, setLaneInteraction] = useState<LaneInteraction | null>(null);
   const [barInteraction, setBarInteraction] = useState<BarInteraction | null>(null);
   const [barPreview, setBarPreview] = useState<Record<string, { startDate: string; endDate: string }>>({});
+  const suppressBarClickTaskIdRef = useRef<string | null>(null);
 
   const canWrite = role === "admin" || role === "editor";
   const canAdmin = role === "admin";
@@ -338,6 +400,26 @@ export function ScheduleDashboard({
     setCreateForm(null);
   };
 
+  const openEditModal = (task: TaskRow) => {
+    setEditForm({
+      taskId: task.id,
+      channelId: task.channel_id,
+      scriptNo: task.script_no,
+      scriptTitle: task.script_title ?? "",
+      taskTypeId: task.task_type_id,
+      statusId: task.status_id,
+      assigneeId: task.assignee_id ?? "",
+      taskName: task.task_name,
+      startDate: task.start_date,
+      endDate: task.end_date,
+      notes: task.notes ?? ""
+    });
+  };
+
+  const closeEditModal = () => {
+    setEditForm(null);
+  };
+
   const handleCreateTask = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!createForm) return;
@@ -373,21 +455,25 @@ export function ScheduleDashboard({
         body: JSON.stringify({ workspaceId, ...patch })
       });
       await loadTasks();
+      return true;
     } catch (patchError) {
       setError(patchError instanceof Error ? patchError.message : "タスク更新に失敗しました");
+      return false;
     }
   };
 
   const handleDeleteTask = async (taskId: string) => {
-    if (!window.confirm("このタスクを削除しますか？")) return;
+    if (!window.confirm("このタスクを削除しますか？")) return false;
 
     try {
       await fetchJson(`/api/tasks/${taskId}?workspaceId=${workspaceId}`, {
         method: "DELETE"
       });
       await loadTasks();
+      return true;
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "タスク削除に失敗しました");
+      return false;
     }
   };
 
@@ -412,13 +498,18 @@ export function ScheduleDashboard({
     }
   };
 
-  const createMaster = async (resource: "channels" | "task_types" | "assignees", name: string) => {
+  const createMaster = async (resource: MasterResource, name: string) => {
     if (!name.trim()) return;
-    await fetchJson(`/api/masters/${resource}`, {
-      method: "POST",
-      body: JSON.stringify({ workspaceId, name: name.trim() })
-    });
-    await loadMasters();
+    try {
+      await fetchJson(`/api/masters/${resource}`, {
+        method: "POST",
+        body: JSON.stringify({ workspaceId, name: name.trim() })
+      });
+      await loadMasters();
+    } catch (masterError) {
+      setError(masterError instanceof Error ? masterError.message : "マスター作成に失敗しました");
+      throw masterError;
+    }
   };
 
   const updateMemberRole = async (userId: string, nextRole: WorkspaceRole) => {
@@ -434,15 +525,33 @@ export function ScheduleDashboard({
   };
 
   const patchMaster = async (
-    resource: "channels" | "task_types" | "assignees",
+    resource: MasterResource,
     id: string,
     patch: Record<string, unknown>
   ) => {
-    await fetchJson(`/api/masters/${resource}`, {
-      method: "PATCH",
-      body: JSON.stringify({ workspaceId, id, ...patch })
-    });
-    await loadMasters();
+    try {
+      await fetchJson(`/api/masters/${resource}`, {
+        method: "PATCH",
+        body: JSON.stringify({ workspaceId, id, ...patch })
+      });
+      await loadMasters();
+    } catch (masterError) {
+      setError(masterError instanceof Error ? masterError.message : "マスター更新に失敗しました");
+      throw masterError;
+    }
+  };
+
+  const deleteMaster = async (resource: MasterResource, id: string) => {
+    try {
+      await fetchJson(`/api/masters/${resource}`, {
+        method: "DELETE",
+        body: JSON.stringify({ workspaceId, id })
+      });
+      await loadMasters();
+    } catch (masterError) {
+      setError(masterError instanceof Error ? masterError.message : "マスター削除に失敗しました");
+      throw masterError;
+    }
   };
 
   const releaseByChannel = useMemo(() => {
@@ -473,6 +582,115 @@ export function ScheduleDashboard({
       return visibleScriptIds.has(releaseDate.script_id);
     });
   }, [releaseDates, tasks, filters.channelId]);
+
+  const timelineDayCells = useMemo<TimelineDayCell[]>(
+    () =>
+      timelineDates.map((date) => ({
+        date,
+        dayLabel: toDayLabel(date),
+        weekdayLabel: toWeekdayLabel(date),
+        monthKey: format(parseISO(date), "yyyy-MM"),
+        monthLabel: toMonthLabel(date)
+      })),
+    [timelineDates]
+  );
+
+  const timelineMonthGroups = useMemo<TimelineMonthGroup[]>(() => {
+    const groups: TimelineMonthGroup[] = [];
+    for (let index = 0; index < timelineDayCells.length; index += 1) {
+      const dayCell = timelineDayCells[index];
+      const current = groups[groups.length - 1];
+      if (current && current.key === dayCell.monthKey) {
+        current.length += 1;
+      } else {
+        groups.push({
+          key: dayCell.monthKey,
+          label: dayCell.monthLabel,
+          startIndex: index,
+          length: 1
+        });
+      }
+    }
+    return groups;
+  }, [timelineDayCells]);
+
+  const releaseBandRows = useMemo<ChannelReleaseBandRow[]>(() => {
+    const sortedChannels = [...masters.channels].sort((a, b) => a.sort_order - b.sort_order);
+    const scopedChannels =
+      filters.channelId === "all" ? sortedChannels : sortedChannels.filter((channel) => channel.id === filters.channelId);
+    const channelsWithRelease = new Set(visibleReleaseDates.map((releaseDate) => releaseDate.channel_id));
+    const rows = scopedChannels.filter((channel) => channelsWithRelease.has(channel.id));
+
+    if (!rows.length) {
+      return [
+        {
+          channelId: "none",
+          label: "公開日なし",
+          tone: "#f4f1ea",
+          maxStack: 1,
+          height: RELEASE_BAND_ROW_HEIGHT,
+          placeholder: true
+        }
+      ];
+    }
+
+    return rows.map((channel, index) => {
+      const perDateCount = new Map<string, number>();
+      for (const releaseDate of visibleReleaseDates) {
+        if (releaseDate.channel_id !== channel.id) continue;
+        const nextCount = (perDateCount.get(releaseDate.release_date) ?? 0) + 1;
+        perDateCount.set(releaseDate.release_date, nextCount);
+      }
+
+      const maxStack = Math.max(1, ...perDateCount.values());
+
+      return {
+        channelId: channel.id,
+        label: `${channel.name} 投稿日`,
+        tone: RELEASE_ROW_TONES[index % RELEASE_ROW_TONES.length],
+        maxStack,
+        height: RELEASE_BAND_ROW_HEIGHT * maxStack
+      };
+    });
+  }, [masters.channels, visibleReleaseDates, filters.channelId]);
+
+  const releaseBandCellMap = useMemo(() => {
+    const map = new Map<string, ReleaseDateRow[]>();
+    for (const releaseDate of visibleReleaseDates) {
+      const key = `${releaseDate.channel_id}:${releaseDate.release_date}`;
+      if (!map.has(key)) {
+        map.set(key, []);
+      }
+      map.get(key)?.push(releaseDate);
+    }
+    return map;
+  }, [visibleReleaseDates]);
+
+  const releaseBandHeight = releaseBandRows.reduce((sum, row) => sum + row.height, 0);
+  const calendarHeaderHeight = MONTH_ROW_HEIGHT + DAY_ROW_HEIGHT + WEEKDAY_ROW_HEIGHT;
+  const timelineHeaderHeight = releaseBandHeight + calendarHeaderHeight;
+
+  const handleSaveTaskEdit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!editForm) return;
+
+    const updated = await handlePatchTask(editForm.taskId, {
+      channelId: editForm.channelId,
+      scriptNo: editForm.scriptNo,
+      scriptTitle: editForm.scriptTitle || undefined,
+      taskTypeId: editForm.taskTypeId,
+      statusId: editForm.statusId,
+      assigneeId: editForm.assigneeId || null,
+      taskName: editForm.taskName,
+      startDate: editForm.startDate,
+      endDate: editForm.endDate,
+      notes: editForm.notes || null
+    });
+
+    if (updated) {
+      closeEditModal();
+    }
+  };
 
   const barRange = (task: TaskRow) => {
     const preview = barPreview[task.id];
@@ -685,484 +903,616 @@ export function ScheduleDashboard({
       <section className="card" style={{ overflow: "hidden" }}>
         <div
           style={{
-            display: "grid",
-            gridTemplateColumns: `${LEFT_WIDTH}px 1fr`,
-            minWidth: LEFT_WIDTH + totalTimelineWidth,
-            borderBottom: "1px solid var(--line)"
+            overflow: "auto",
+            maxHeight: "68vh",
+            background: "#fff"
           }}
         >
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "140px 110px 110px 90px 110px 1fr 110px 110px 50px",
-              alignItems: "center",
-              height: 44,
-              background: "var(--panel-muted)",
-              borderRight: "1px solid var(--line)",
-              fontSize: 12,
-              fontWeight: 600,
-              padding: "0 10px",
-              gap: 8,
-              position: "sticky",
-              left: 0,
-              zIndex: 4
-            }}
-          >
-            <span>ステータス</span>
-            <span>チャンネル</span>
-            <span>担当</span>
-            <span>脚本番号</span>
-            <span>タスク種</span>
-            <span>タスク名</span>
-            <span>開始日</span>
-            <span>終了日</span>
-            <span />
-          </div>
-
-          <div style={{ position: "relative", background: "var(--panel-muted)", overflowX: "auto" }}>
-            <div style={{ display: "flex", width: totalTimelineWidth, height: 44 }}>
-              {timelineDates.map((date) => (
-                <div
-                  key={date}
-                  style={{
-                    width: DAY_WIDTH,
-                    borderLeft: "1px solid var(--line)",
-                    fontSize: 11,
-                    color: "var(--text-muted)",
-                    display: "grid",
-                    placeItems: "center"
-                  }}
-                >
-                  {toDateLabel(date)}
-                </div>
-              ))}
-            </div>
-
-            {visibleReleaseDates.map((releaseDate) => {
-              const index = dateToIndex.get(releaseDate.release_date);
-              if (index === undefined) return null;
-
-              return (
-                <div
-                  key={`marker-head-${releaseDate.id}`}
-                  title={`${releaseDate.channel_name} / ${releaseDate.script_no} / ${releaseDate.release_date}${releaseDate.label ? ` / ${releaseDate.label}` : ""}`}
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    bottom: 0,
-                    left: index * DAY_WIDTH + DAY_WIDTH / 2,
-                    width: 2,
-                    background: "#bc4f2f",
-                    opacity: 0.6
-                  }}
-                />
-              );
-            })}
-          </div>
-        </div>
-
-        <div style={{ maxHeight: "65vh", overflow: "auto", background: "#fff" }}>
-          {loading ? (
-            <div style={{ padding: 20 }} className="muted">
-              Loading...
-            </div>
-          ) : null}
-
-          {!loading && grouped.length === 0 ? (
-            <div style={{ padding: 20 }} className="muted">
-              タスクがありません。
-            </div>
-          ) : null}
-
-          {grouped.map((group) => {
-            const releases = releaseByChannel.get(group.id) ?? [];
-
-            return (
-              <div key={group.id} style={{ borderBottom: "1px solid var(--line)" }}>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: `${LEFT_WIDTH}px 1fr`,
-                    minWidth: LEFT_WIDTH + totalTimelineWidth,
-                    background: "#f9f7f1"
-                  }}
-                >
-                  <div
-                    style={{
-                      padding: "8px 10px",
-                      borderRight: "1px solid var(--line)",
-                      position: "sticky",
-                      left: 0,
-                      background: "#f9f7f1",
-                      zIndex: 2
-                    }}
-                  >
-                    <strong>{group.name}</strong>
-                    <span className="muted" style={{ marginLeft: 8 }}>
-                      {group.items.length} tasks
-                    </span>
-                  </div>
-                  <div style={{ padding: "8px 10px", overflowX: "auto" }} className="muted">
-                    {releases.length ? `${releases.length}件の公開日マーカー` : "公開日マーカーなし"}
-                  </div>
-                </div>
-
-                {group.items.map((task) => {
-                  const range = barRange(task);
-
-                  return (
+          <div style={{ minWidth: LEFT_WIDTH + totalTimelineWidth }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: `${LEFT_WIDTH}px ${totalTimelineWidth}px`,
+                borderBottom: "1px solid var(--line)"
+              }}
+            >
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateRows: `${releaseBandHeight}px ${calendarHeaderHeight}px`,
+                  height: timelineHeaderHeight,
+                  background: "var(--panel-muted)",
+                  borderRight: "1px solid var(--line)",
+                  position: "sticky",
+                  left: 0,
+                  zIndex: 12
+                }}
+              >
+                <div style={{ borderBottom: "1px solid var(--line)" }}>
+                  {releaseBandRows.map((row, rowIndex) => (
                     <div
-                      key={task.id}
+                      key={`left-release-${row.channelId}-${rowIndex}`}
                       style={{
-                        display: "grid",
-                        gridTemplateColumns: `${LEFT_WIDTH}px 1fr`,
-                        minWidth: LEFT_WIDTH + totalTimelineWidth,
-                        height: 42,
-                        borderTop: "1px solid #f0eee8"
+                        height: row.height,
+                        display: "flex",
+                        alignItems: "flex-start",
+                        padding: "0 10px",
+                        fontSize: 10,
+                        fontWeight: 700,
+                        background: row.tone,
+                        borderTop: rowIndex === 0 ? "none" : "1px solid rgba(125, 118, 102, 0.35)",
+                        color: row.placeholder ? "var(--text-muted)" : "#2d2a23",
+                        lineHeight: "14px",
+                        paddingTop: 1
                       }}
                     >
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "140px 110px 110px 90px 110px 1fr 110px 110px 50px",
-                          alignItems: "center",
-                          padding: "0 10px",
-                          gap: 8,
-                          borderRight: "1px solid var(--line)",
-                          position: "sticky",
-                          left: 0,
-                          background: "#fff",
-                          zIndex: 1
-                        }}
-                      >
-                        <select
-                          value={task.status_id}
-                          disabled={!canWrite}
-                          onChange={(event) => {
-                            void handlePatchTask(task.id, { statusId: event.target.value });
-                          }}
-                        >
-                          {masters.taskStatuses.map((status) => (
-                            <option key={status.id} value={status.id}>
-                              {status.name}
-                            </option>
-                          ))}
-                        </select>
+                      {row.label}
+                    </div>
+                  ))}
+                </div>
 
-                        <span>{task.channel_name}</span>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: LEFT_GRID_TEMPLATE,
+                    alignItems: "center",
+                    fontSize: 10,
+                    fontWeight: 700,
+                    padding: "0 10px",
+                    gap: TABLE_GAP
+                  }}
+                >
+                  <span>チャンネル</span>
+                  <span>担当</span>
+                  <span>脚本番号</span>
+                  <span>タスク種</span>
+                  <span>タスク名</span>
+                  <span>開始日</span>
+                  <span>終了日</span>
+                  <span>操作</span>
+                </div>
+              </div>
 
-                        <select
-                          value={task.assignee_id ?? ""}
-                          disabled={!canWrite}
-                          onChange={(event) => {
-                            void handlePatchTask(task.id, { assigneeId: event.target.value || null });
-                          }}
-                        >
-                          <option value="">未割当</option>
-                          {masters.assignees.map((assignee) => (
-                            <option key={assignee.id} value={assignee.id}>
-                              {assignee.display_name}
-                            </option>
-                          ))}
-                        </select>
+              <div style={{ width: totalTimelineWidth, background: "var(--panel-muted)" }}>
+                <div
+                  style={{
+                    width: totalTimelineWidth,
+                    height: releaseBandHeight,
+                    borderBottom: "1px solid var(--line)"
+                  }}
+                >
+                  {releaseBandRows.map((row, rowIndex) => (
+                    <div
+                      key={`release-row-${row.channelId}-${rowIndex}`}
+                      style={{
+                        display: "flex",
+                        width: totalTimelineWidth,
+                        height: row.height,
+                        borderTop: rowIndex === 0 ? "none" : "1px solid rgba(125, 118, 102, 0.35)",
+                        background: row.tone
+                      }}
+                    >
+                      {timelineDayCells.map((dayCell) => {
+                        const releases = row.placeholder
+                          ? []
+                          : (releaseBandCellMap.get(`${row.channelId}:${dayCell.date}`) ?? []);
+                        const title = releases
+                          .map((release) =>
+                            `${release.script_no}${release.label ? ` (${release.label})` : ""} ${release.release_date}`
+                          )
+                          .join(", ");
 
-                        <span>{task.script_no}</span>
-                        <span>{task.task_type_name}</span>
-
-                        <input
-                          defaultValue={task.task_name}
-                          disabled={!canWrite}
-                          onBlur={(event) => {
-                            if (event.target.value !== task.task_name) {
-                              void handlePatchTask(task.id, { taskName: event.target.value });
-                            }
-                          }}
-                        />
-
-                        <input
-                          type="date"
-                          value={range.startDate}
-                          disabled={!canWrite}
-                          onChange={(event) => {
-                            void handlePatchTask(task.id, { startDate: event.target.value });
-                          }}
-                        />
-                        <input
-                          type="date"
-                          value={range.endDate}
-                          disabled={!canWrite}
-                          onChange={(event) => {
-                            void handlePatchTask(task.id, { endDate: event.target.value });
-                          }}
-                        />
-
-                        <button
-                          type="button"
-                          className="danger"
-                          disabled={!canWrite}
-                          onClick={() => {
-                            void handleDeleteTask(task.id);
-                          }}
-                        >
-                          ✕
-                        </button>
-                      </div>
-
-                      <div
-                        style={{ position: "relative", overflowX: "auto" }}
-                        onPointerMove={(event) => {
-                          if (!barInteraction) return;
-                          if (barInteraction.pointerId !== event.pointerId) return;
-
-                          const lane = event.currentTarget;
-                          const index = indexFromPointer(event, lane);
-                          applyBarPreview(barInteraction, index);
-                        }}
-                        onPointerUp={(event) => {
-                          if (!barInteraction) return;
-                          if (barInteraction.pointerId !== event.pointerId) return;
-                          void commitBarPreview(barInteraction.taskId);
-                          setBarInteraction(null);
-                        }}
-                      >
-                        <div style={{ position: "relative", width: totalTimelineWidth, height: 42 }}>
-                          {timelineDates.map((date) => (
-                            <div
-                              key={`${task.id}-${date}`}
-                              style={{
-                                position: "absolute",
-                                left: dateToIndex.get(date)! * DAY_WIDTH,
-                                top: 0,
-                                bottom: 0,
-                                width: DAY_WIDTH,
-                                borderLeft: "1px solid #f0eee8"
-                              }}
-                            />
-                          ))}
-
-                          {visibleReleaseDates.map((releaseDate) => {
-                            const markerIndex = dateToIndex.get(releaseDate.release_date);
-                            if (markerIndex === undefined) return null;
-
-                            return (
-                              <div
-                                key={`marker-row-${task.id}-${releaseDate.id}`}
-                                title={`${releaseDate.channel_name} / ${releaseDate.script_no} / ${releaseDate.release_date}`}
-                                style={{
-                                  position: "absolute",
-                                  top: 0,
-                                  bottom: 0,
-                                  left: markerIndex * DAY_WIDTH + DAY_WIDTH / 2,
-                                  width: 1,
-                                  background: releaseDate.channel_id === task.channel_id ? "#bc4f2f" : "#d7c6b9",
-                                  opacity: releaseDate.channel_id === task.channel_id ? 0.7 : 0.25
-                                }}
-                              />
-                            );
-                          })}
-
+                        return (
                           <div
-                            role="button"
-                            tabIndex={-1}
-                            onPointerDown={(event) => {
-                              if (!canWrite) return;
-                              const lane = event.currentTarget.parentElement as HTMLElement;
-                              const index = indexFromPointer(event, lane);
-                              const pointerId = event.pointerId;
-                              lane.setPointerCapture(pointerId);
-                              const offset = index - (dateToIndex.get(range.startDate) ?? index);
-                              setBarInteraction({
-                                taskId: task.id,
-                                type: "move",
-                                pointerId,
-                                baseStart: range.startDate,
-                                baseEnd: range.endDate,
-                                offsetDays: offset
-                              });
-                            }}
+                            key={`release-cell-${row.channelId}-${dayCell.date}`}
+                            title={title || undefined}
                             style={{
-                              position: "absolute",
-                              top: 8,
-                              left: range.startIndex * DAY_WIDTH + 2,
-                              width: Math.max(DAY_WIDTH - 4, (range.endIndex - range.startIndex + 1) * DAY_WIDTH - 4),
-                              height: 26,
-                              borderRadius: 7,
-                              background: "linear-gradient(120deg, #4b8aff, #2b66d7)",
-                              color: "#fff",
+                              width: DAY_WIDTH,
+                              borderLeft: "1px solid rgba(122, 116, 101, 0.35)",
+                              height: row.height,
                               display: "flex",
+                              flexDirection: "column",
+                              justifyContent: "flex-start",
                               alignItems: "center",
-                              padding: "0 8px",
-                              fontSize: 12,
-                              cursor: canWrite ? "grab" : "default",
-                              userSelect: "none",
-                              overflow: "hidden"
+                              gap: 0,
+                              padding: "1px 1px 0"
                             }}
                           >
+                            {releases.map((release) => (
+                              <span
+                                key={release.id}
+                                style={{
+                                  whiteSpace: "nowrap",
+                                  fontSize: 8,
+                                  lineHeight: "11px",
+                                  color: "#2d3c62",
+                                  fontWeight: 700
+                                }}
+                              >
+                                {release.script_no}
+                              </span>
+                            ))}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    width: totalTimelineWidth,
+                    height: MONTH_ROW_HEIGHT,
+                    background: "#7f95b7",
+                    borderBottom: "1px solid var(--line)"
+                  }}
+                >
+                  {timelineMonthGroups.map((monthGroup) => (
+                    <div
+                      key={`month-group-${monthGroup.key}`}
+                      style={{
+                        width: monthGroup.length * DAY_WIDTH,
+                        borderLeft: "1px solid rgba(255, 255, 255, 0.35)",
+                        color: "#f5f8ff",
+                        fontSize: 10,
+                        fontWeight: 700,
+                        position: "relative",
+                        overflow: "hidden"
+                      }}
+                    >
+                      <span
+                        style={{
+                          position: "sticky",
+                          left: 2,
+                          top: 0,
+                          display: "inline-block",
+                          lineHeight: `${MONTH_ROW_HEIGHT}px`,
+                          paddingRight: 4
+                        }}
+                      >
+                        {monthGroup.label}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    width: totalTimelineWidth,
+                    height: DAY_ROW_HEIGHT,
+                    background: "#e6edf8",
+                    borderBottom: "1px solid var(--line)"
+                  }}
+                >
+                  {timelineDayCells.map((dayCell) => (
+                    <div
+                      key={`day-label-${dayCell.date}`}
+                      style={{
+                        width: DAY_WIDTH,
+                        borderLeft: "1px solid rgba(122, 132, 146, 0.35)",
+                        fontSize: 10,
+                        color: "#2e3745",
+                        fontWeight: 700,
+                        display: "grid",
+                        placeItems: "center"
+                      }}
+                    >
+                      {dayCell.dayLabel}
+                    </div>
+                  ))}
+                </div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    width: totalTimelineWidth,
+                    height: WEEKDAY_ROW_HEIGHT,
+                    background: "#f1f4f8",
+                    borderBottom: "1px solid var(--line)"
+                  }}
+                >
+                  {timelineDayCells.map((dayCell) => (
+                    <div
+                      key={`weekday-label-${dayCell.date}`}
+                      style={{
+                        width: DAY_WIDTH,
+                        borderLeft: "1px solid rgba(132, 140, 151, 0.3)",
+                        fontSize: 9,
+                        color: "#4b5565",
+                        fontWeight: 700,
+                        display: "grid",
+                        placeItems: "center"
+                      }}
+                    >
+                      {dayCell.weekdayLabel}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {loading ? (
+              <div style={{ padding: 20 }} className="muted">
+                Loading...
+              </div>
+            ) : null}
+
+            {!loading && grouped.length === 0 ? (
+              <div style={{ padding: 20 }} className="muted">
+                タスクがありません。
+              </div>
+            ) : null}
+
+            {grouped.map((group) => {
+              const releases = releaseByChannel.get(group.id) ?? [];
+
+              return (
+                <div key={group.id} style={{ borderBottom: "1px solid var(--line)" }}>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: `${LEFT_WIDTH}px ${totalTimelineWidth}px`,
+                      background: "#f9f7f1"
+                    }}
+                  >
+                    <div
+                      style={{
+                        padding: "8px 10px",
+                        borderRight: "1px solid var(--line)",
+                        position: "sticky",
+                        left: 0,
+                        background: "#f9f7f1",
+                        zIndex: 6
+                      }}
+                    >
+                      <strong>{group.name}</strong>
+                      <span className="muted" style={{ marginLeft: 8 }}>
+                        {group.items.length} tasks
+                      </span>
+                    </div>
+                    <div style={{ padding: "8px 10px" }} className="muted">
+                      {releases.length ? `${releases.length}件の公開日マーカー` : "公開日マーカーなし"}
+                    </div>
+                  </div>
+
+                  {group.items.map((task) => {
+                    const range = barRange(task);
+
+                    return (
+                      <div
+                        key={task.id}
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: `${LEFT_WIDTH}px ${totalTimelineWidth}px`,
+                          height: TASK_ROW_HEIGHT,
+                          borderTop: "1px solid #f0eee8"
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: LEFT_GRID_TEMPLATE,
+                            alignItems: "center",
+                            padding: "0 10px",
+                            gap: TABLE_GAP,
+                            borderRight: "1px solid var(--line)",
+                            position: "sticky",
+                            left: 0,
+                            background: "#fff",
+                            zIndex: 5,
+                            overflow: "hidden",
+                            fontSize: 11
+                          }}
+                        >
+                          <span>{task.channel_name}</span>
+                          <span>{task.assignee_name ?? "未割当"}</span>
+                          <span>{task.script_no}</span>
+                          <span>{task.task_type_name}</span>
+                          <span title={task.task_name} style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                             {task.task_name}
-                            <span
-                              onPointerDown={(event) => {
-                                event.stopPropagation();
+                          </span>
+                          <span>{toMonthDayLabel(range.startDate)}</span>
+                          <span>{toMonthDayLabel(range.endDate)}</span>
+                          <button
+                            type="button"
+                            disabled={!canWrite}
+                            onClick={() => {
+                              openEditModal(task);
+                            }}
+                            style={{ padding: "2px 6px", fontSize: 10, lineHeight: "14px" }}
+                          >
+                            編集
+                          </button>
+                        </div>
+
+                        <div
+                          style={{ position: "relative" }}
+                          onPointerMove={(event) => {
+                            if (!barInteraction) return;
+                            if (barInteraction.pointerId !== event.pointerId) return;
+
+                            const lane = event.currentTarget;
+                            const index = indexFromPointer(event, lane);
+                            applyBarPreview(barInteraction, index);
+                            if (index !== barInteraction.lastIndex) {
+                              setBarInteraction((current) =>
+                                current && current.pointerId === event.pointerId
+                                  ? { ...current, moved: true, lastIndex: index }
+                                  : current
+                              );
+                            }
+                          }}
+                          onPointerUp={(event) => {
+                            if (!barInteraction) return;
+                            if (barInteraction.pointerId !== event.pointerId) return;
+
+                            void commitBarPreview(barInteraction.taskId);
+                            if (barInteraction.moved) {
+                              suppressBarClickTaskIdRef.current = barInteraction.taskId;
+                              requestAnimationFrame(() => {
+                                if (suppressBarClickTaskIdRef.current === barInteraction.taskId) {
+                                  suppressBarClickTaskIdRef.current = null;
+                                }
+                              });
+                            }
+                            setBarInteraction(null);
+                          }}
+                        >
+                          <div style={{ position: "relative", width: totalTimelineWidth, height: TASK_ROW_HEIGHT }}>
+                            {timelineDates.map((date) => (
+                              <div
+                                key={`${task.id}-${date}`}
+                                style={{
+                                  position: "absolute",
+                                  left: (dateToIndex.get(date) ?? 0) * DAY_WIDTH,
+                                  top: 0,
+                                  bottom: 0,
+                                  width: DAY_WIDTH,
+                                  borderLeft: "1px solid #f0eee8"
+                                }}
+                              />
+                            ))}
+
+                            {visibleReleaseDates.map((releaseDate) => {
+                              const markerIndex = dateToIndex.get(releaseDate.release_date);
+                              if (markerIndex === undefined) return null;
+
+                              return (
+                                <div
+                                  key={`marker-row-${task.id}-${releaseDate.id}`}
+                                  title={`${releaseDate.channel_name} / ${releaseDate.script_no} / ${releaseDate.release_date}`}
+                                  style={{
+                                    position: "absolute",
+                                    top: 0,
+                                    bottom: 0,
+                                    left: markerIndex * DAY_WIDTH + DAY_WIDTH / 2,
+                                    width: 1,
+                                    background: releaseDate.channel_id === task.channel_id ? "#bc4f2f" : "#d7c6b9",
+                                    opacity: releaseDate.channel_id === task.channel_id ? 0.7 : 0.25
+                                  }}
+                                />
+                              );
+                            })}
+
+                            <div
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => {
                                 if (!canWrite) return;
-                                const lane = (event.currentTarget.parentElement?.parentElement as HTMLElement) ?? null;
-                                if (!lane) return;
+                                if (suppressBarClickTaskIdRef.current === task.id) return;
+                                openEditModal(task);
+                              }}
+                              onPointerDown={(event) => {
+                                if (!canWrite) return;
+                                const lane = event.currentTarget.parentElement as HTMLElement;
+                                const index = indexFromPointer(event, lane);
                                 const pointerId = event.pointerId;
                                 lane.setPointerCapture(pointerId);
+                                const offset = index - (dateToIndex.get(range.startDate) ?? index);
                                 setBarInteraction({
                                   taskId: task.id,
-                                  type: "resize-start",
+                                  type: "move",
                                   pointerId,
                                   baseStart: range.startDate,
                                   baseEnd: range.endDate,
-                                  offsetDays: 0
+                                  offsetDays: offset,
+                                  moved: false,
+                                  lastIndex: index
                                 });
                               }}
                               style={{
                                 position: "absolute",
-                                left: 0,
-                                top: 0,
-                                bottom: 0,
-                                width: 8,
-                                cursor: canWrite ? "ew-resize" : "default"
+                                top: Math.max(1, Math.floor((TASK_ROW_HEIGHT - BAR_HEIGHT) / 2)),
+                                left: range.startIndex * DAY_WIDTH + 2,
+                                width: Math.max(DAY_WIDTH - 4, (range.endIndex - range.startIndex + 1) * DAY_WIDTH - 4),
+                                height: BAR_HEIGHT,
+                                borderRadius: 5,
+                                background: "linear-gradient(120deg, #4b8aff, #2b66d7)",
+                                color: "#fff",
+                                display: "flex",
+                                alignItems: "center",
+                                padding: "0 6px",
+                                fontSize: 10,
+                                cursor: canWrite ? "grab" : "default",
+                                userSelect: "none",
+                                overflow: "hidden",
+                                border: "1px solid rgba(255,255,255,0.15)"
                               }}
-                            />
-                            <span
-                              onPointerDown={(event) => {
-                                event.stopPropagation();
-                                if (!canWrite) return;
-                                const lane = (event.currentTarget.parentElement?.parentElement as HTMLElement) ?? null;
-                                if (!lane) return;
-                                const pointerId = event.pointerId;
-                                lane.setPointerCapture(pointerId);
-                                setBarInteraction({
-                                  taskId: task.id,
-                                  type: "resize-end",
-                                  pointerId,
-                                  baseStart: range.startDate,
-                                  baseEnd: range.endDate,
-                                  offsetDays: 0
-                                });
-                              }}
-                              style={{
-                                position: "absolute",
-                                right: 0,
-                                top: 0,
-                                bottom: 0,
-                                width: 8,
-                                cursor: canWrite ? "ew-resize" : "default"
-                              }}
-                            />
+                            >
+                              <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{task.task_name}</span>
+                              <span
+                                onPointerDown={(event) => {
+                                  event.stopPropagation();
+                                  if (!canWrite) return;
+                                  const lane = (event.currentTarget.parentElement?.parentElement as HTMLElement) ?? null;
+                                  if (!lane) return;
+                                  const pointerId = event.pointerId;
+                                  const index = indexFromPointer(event, lane);
+                                  lane.setPointerCapture(pointerId);
+                                  setBarInteraction({
+                                    taskId: task.id,
+                                    type: "resize-start",
+                                    pointerId,
+                                    baseStart: range.startDate,
+                                    baseEnd: range.endDate,
+                                    offsetDays: 0,
+                                    moved: false,
+                                    lastIndex: index
+                                  });
+                                }}
+                                style={{
+                                  position: "absolute",
+                                  left: 0,
+                                  top: 0,
+                                  bottom: 0,
+                                  width: 8,
+                                  cursor: canWrite ? "ew-resize" : "default"
+                                }}
+                              />
+                              <span
+                                onPointerDown={(event) => {
+                                  event.stopPropagation();
+                                  if (!canWrite) return;
+                                  const lane = (event.currentTarget.parentElement?.parentElement as HTMLElement) ?? null;
+                                  if (!lane) return;
+                                  const pointerId = event.pointerId;
+                                  const index = indexFromPointer(event, lane);
+                                  lane.setPointerCapture(pointerId);
+                                  setBarInteraction({
+                                    taskId: task.id,
+                                    type: "resize-end",
+                                    pointerId,
+                                    baseStart: range.startDate,
+                                    baseEnd: range.endDate,
+                                    offsetDays: 0,
+                                    moved: false,
+                                    lastIndex: index
+                                  });
+                                }}
+                                style={{
+                                  position: "absolute",
+                                  right: 0,
+                                  top: 0,
+                                  bottom: 0,
+                                  width: 8,
+                                  cursor: canWrite ? "ew-resize" : "default"
+                                }}
+                              />
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
 
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: `${LEFT_WIDTH}px 1fr`,
-                    minWidth: LEFT_WIDTH + totalTimelineWidth,
-                    height: 34,
-                    borderTop: "1px dashed var(--line)",
-                    background: "#fdfcf8"
-                  }}
-                >
                   <div
                     style={{
-                      padding: "6px 10px",
-                      borderRight: "1px solid var(--line)",
-                      position: "sticky",
-                      left: 0,
-                      background: "#fdfcf8",
-                      zIndex: 1
+                      display: "grid",
+                      gridTemplateColumns: `${LEFT_WIDTH}px ${totalTimelineWidth}px`,
+                      height: CREATE_ROW_HEIGHT,
+                      borderTop: "1px dashed var(--line)",
+                      background: "#fdfcf8"
                     }}
-                    className="muted"
                   >
-                    + ドラッグして新規タスク作成
-                  </div>
                   <div
-                    style={{ position: "relative", overflowX: "auto" }}
-                    onPointerDown={(event) => {
-                      if (!canWrite) return;
-                      const lane = event.currentTarget;
-                      const index = indexFromPointer(event, lane);
-                      lane.setPointerCapture(event.pointerId);
-                      setLaneInteraction({
-                        channelId: group.id,
-                        pointerId: event.pointerId,
-                        anchorIndex: index,
-                        currentIndex: index
-                      });
-                    }}
-                    onPointerMove={(event) => {
-                      if (!laneInteraction) return;
-                      if (event.pointerId !== laneInteraction.pointerId) return;
+                    className="muted"
+                    style={{
+                      fontSize: 11,
+                      padding: "4px 10px",
+                        borderRight: "1px solid var(--line)",
+                        position: "sticky",
+                        left: 0,
+                        background: "#fdfcf8",
+                        zIndex: 4
+                      }}
+                    >
+                      + ドラッグして新規タスク作成
+                    </div>
+                    <div
+                      style={{ position: "relative" }}
+                      onPointerDown={(event) => {
+                        if (!canWrite) return;
+                        const lane = event.currentTarget;
+                        const index = indexFromPointer(event, lane);
+                        lane.setPointerCapture(event.pointerId);
+                        setLaneInteraction({
+                          channelId: group.id,
+                          pointerId: event.pointerId,
+                          anchorIndex: index,
+                          currentIndex: index
+                        });
+                      }}
+                      onPointerMove={(event) => {
+                        if (!laneInteraction) return;
+                        if (event.pointerId !== laneInteraction.pointerId) return;
 
-                      const lane = event.currentTarget;
-                      const index = indexFromPointer(event, lane);
-                      setLaneInteraction((current) => (current ? { ...current, currentIndex: index } : null));
-                    }}
-                    onPointerUp={(event) => {
-                      if (!laneInteraction) return;
-                      if (event.pointerId !== laneInteraction.pointerId) return;
+                        const lane = event.currentTarget;
+                        const index = indexFromPointer(event, lane);
+                        setLaneInteraction((current) => (current ? { ...current, currentIndex: index } : null));
+                      }}
+                      onPointerUp={(event) => {
+                        if (!laneInteraction) return;
+                        if (event.pointerId !== laneInteraction.pointerId) return;
 
-                      const startIndex = Math.min(laneInteraction.anchorIndex, laneInteraction.currentIndex);
-                      const endIndex = Math.max(laneInteraction.anchorIndex, laneInteraction.currentIndex);
-                      const channelId =
-                        group.id === "all" ? (masters.channels[0]?.id ?? "") : laneInteraction.channelId;
-                      if (!channelId) {
+                        const startIndex = Math.min(laneInteraction.anchorIndex, laneInteraction.currentIndex);
+                        const endIndex = Math.max(laneInteraction.anchorIndex, laneInteraction.currentIndex);
+                        const channelId =
+                          group.id === "all" ? (masters.channels[0]?.id ?? "") : laneInteraction.channelId;
+                        if (!channelId) {
+                          setLaneInteraction(null);
+                          return;
+                        }
+                        openCreateModal({
+                          channelId,
+                          startDate: timelineDates[startIndex],
+                          endDate: timelineDates[endIndex]
+                        });
                         setLaneInteraction(null);
-                        return;
-                      }
-                      openCreateModal({
-                        channelId,
-                        startDate: timelineDates[startIndex],
-                        endDate: timelineDates[endIndex]
-                      });
-                      setLaneInteraction(null);
-                    }}
-                  >
-                    <div style={{ position: "relative", width: totalTimelineWidth, height: 34 }}>
-                      {timelineDates.map((date) => (
-                        <div
-                          key={`create-${group.id}-${date}`}
-                          style={{
-                            position: "absolute",
-                            left: dateToIndex.get(date)! * DAY_WIDTH,
-                            width: DAY_WIDTH,
-                            top: 0,
-                            bottom: 0,
-                            borderLeft: "1px solid #f3f1ea"
-                          }}
-                        />
-                      ))}
+                      }}
+                    >
+                      <div style={{ position: "relative", width: totalTimelineWidth, height: CREATE_ROW_HEIGHT }}>
+                        {timelineDates.map((date) => (
+                          <div
+                            key={`create-${group.id}-${date}`}
+                            style={{
+                              position: "absolute",
+                              left: (dateToIndex.get(date) ?? 0) * DAY_WIDTH,
+                              width: DAY_WIDTH,
+                              top: 0,
+                              bottom: 0,
+                              borderLeft: "1px solid #f3f1ea"
+                            }}
+                          />
+                        ))}
 
-                      {laneInteraction && laneInteraction.channelId === group.id ? (
-                        <div
-                          style={{
-                            position: "absolute",
-                            left: Math.min(laneInteraction.anchorIndex, laneInteraction.currentIndex) * DAY_WIDTH + 2,
-                            top: 5,
-                            height: 24,
-                            width:
-                              (Math.max(laneInteraction.anchorIndex, laneInteraction.currentIndex) -
-                                Math.min(laneInteraction.anchorIndex, laneInteraction.currentIndex) +
-                                1) *
-                                DAY_WIDTH -
-                              4,
-                            borderRadius: 5,
-                            background: "rgba(36, 89, 204, 0.22)",
-                            border: "1px solid rgba(36, 89, 204, 0.6)"
-                          }}
-                        />
-                      ) : null}
+                        {laneInteraction && laneInteraction.channelId === group.id ? (
+                          <div
+                            style={{
+                              position: "absolute",
+                              left: Math.min(laneInteraction.anchorIndex, laneInteraction.currentIndex) * DAY_WIDTH + 2,
+                              top: Math.max(1, Math.floor((CREATE_ROW_HEIGHT - BAR_HEIGHT) / 2)),
+                              height: BAR_HEIGHT,
+                              width:
+                                (Math.max(laneInteraction.anchorIndex, laneInteraction.currentIndex) -
+                                  Math.min(laneInteraction.anchorIndex, laneInteraction.currentIndex) +
+                                  1) *
+                                  DAY_WIDTH -
+                                4,
+                              borderRadius: 4,
+                              background: "rgba(36, 89, 204, 0.22)",
+                              border: "1px solid rgba(36, 89, 204, 0.6)"
+                            }}
+                          />
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
       </section>
 
@@ -1272,11 +1622,14 @@ export function ScheduleDashboard({
           items={masters.channels.map((channel) => ({
             id: channel.id,
             label: channel.name,
-            active: channel.is_active
+            toggle: channel.is_active
           }))}
+          toggleLabel="有効"
           canEdit={canAdmin}
           onCreate={async (name) => createMaster("channels", name)}
-          onToggle={async (id, active) => patchMaster("channels", id, { isActive: active })}
+          onToggle={async (id, toggle) => patchMaster("channels", id, { isActive: toggle })}
+          onRename={async (id, name) => patchMaster("channels", id, { name })}
+          onDelete={async (id) => deleteMaster("channels", id)}
         />
 
         <MasterEditor
@@ -1285,11 +1638,14 @@ export function ScheduleDashboard({
           items={masters.taskTypes.map((taskType) => ({
             id: taskType.id,
             label: taskType.name,
-            active: taskType.is_active
+            toggle: taskType.is_active
           }))}
+          toggleLabel="有効"
           canEdit={canAdmin}
           onCreate={async (name) => createMaster("task_types", name)}
-          onToggle={async (id, active) => patchMaster("task_types", id, { isActive: active })}
+          onToggle={async (id, toggle) => patchMaster("task_types", id, { isActive: toggle })}
+          onRename={async (id, name) => patchMaster("task_types", id, { name })}
+          onDelete={async (id) => deleteMaster("task_types", id)}
         />
 
         <MasterEditor
@@ -1298,17 +1654,43 @@ export function ScheduleDashboard({
           items={masters.assignees.map((assignee) => ({
             id: assignee.id,
             label: assignee.display_name,
-            active: assignee.is_active
+            toggle: assignee.is_active
           }))}
+          toggleLabel="有効"
           canEdit={canAdmin}
           onCreate={async (name) => createMaster("assignees", name)}
-          onToggle={async (id, active) => patchMaster("assignees", id, { isActive: active })}
+          onToggle={async (id, toggle) => patchMaster("assignees", id, { isActive: toggle })}
+          onRename={async (id, name) => patchMaster("assignees", id, { name })}
+          onDelete={async (id) => deleteMaster("assignees", id)}
+        />
+
+        <MasterEditor
+          title="タスクステータス"
+          resource="task_statuses"
+          items={masters.taskStatuses.map((status) => ({
+            id: status.id,
+            label: status.name,
+            toggle: status.is_done
+          }))}
+          toggleLabel="完了扱い"
+          canEdit={canAdmin}
+          onCreate={async (name) => createMaster("task_statuses", name)}
+          onToggle={async (id, toggle) => patchMaster("task_statuses", id, { isDone: toggle })}
+          onRename={async (id, name) => patchMaster("task_statuses", id, { name })}
+          onDelete={async (id) => deleteMaster("task_statuses", id)}
         />
       </section>
 
       {createForm && createDraft ? (
-        <dialog open style={{ border: "1px solid var(--line)", borderRadius: 12, width: "min(560px, 95vw)" }}>
-          <form onSubmit={handleCreateTask} style={{ display: "grid", gap: 10 }}>
+        <div
+          className="modal-overlay"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeCreateModal();
+            }
+          }}
+        >
+          <form onSubmit={handleCreateTask} className="card modal-panel" style={{ display: "grid", gap: 10, width: 720 }}>
             <h3 style={{ margin: 0 }}>新規タスク作成</h3>
             <div className="muted" style={{ fontSize: 13 }}>
               {createDraft.startDate} ~ {createDraft.endDate}
@@ -1456,7 +1838,181 @@ export function ScheduleDashboard({
               </button>
             </div>
           </form>
-        </dialog>
+        </div>
+      ) : null}
+
+      {editForm ? (
+        <div
+          className="modal-overlay"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeEditModal();
+            }
+          }}
+        >
+          <form onSubmit={handleSaveTaskEdit} className="card modal-panel" style={{ display: "grid", gap: 10, width: 720 }}>
+            <h3 style={{ margin: 0 }}>タスク編集</h3>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <label style={{ display: "grid", gap: 4 }}>
+                チャンネル
+                <select
+                  value={editForm.channelId}
+                  onChange={(event) =>
+                    setEditForm((current) => (current ? { ...current, channelId: event.target.value } : current))
+                  }
+                >
+                  {masters.channels.map((channel) => (
+                    <option key={channel.id} value={channel.id}>
+                      {channel.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label style={{ display: "grid", gap: 4 }}>
+                脚本番号
+                <input
+                  value={editForm.scriptNo}
+                  required
+                  onChange={(event) =>
+                    setEditForm((current) => (current ? { ...current, scriptNo: event.target.value } : current))
+                  }
+                />
+              </label>
+            </div>
+
+            <label style={{ display: "grid", gap: 4 }}>
+              脚本タイトル
+              <input
+                value={editForm.scriptTitle}
+                onChange={(event) =>
+                  setEditForm((current) => (current ? { ...current, scriptTitle: event.target.value } : current))
+                }
+              />
+            </label>
+
+            <label style={{ display: "grid", gap: 4 }}>
+              タスク名
+              <input
+                value={editForm.taskName}
+                required
+                onChange={(event) =>
+                  setEditForm((current) => (current ? { ...current, taskName: event.target.value } : current))
+                }
+              />
+            </label>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+              <label style={{ display: "grid", gap: 4 }}>
+                タスク種
+                <select
+                  value={editForm.taskTypeId}
+                  onChange={(event) =>
+                    setEditForm((current) => (current ? { ...current, taskTypeId: event.target.value } : current))
+                  }
+                >
+                  {masters.taskTypes.map((taskType) => (
+                    <option key={taskType.id} value={taskType.id}>
+                      {taskType.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label style={{ display: "grid", gap: 4 }}>
+                ステータス
+                <select
+                  value={editForm.statusId}
+                  onChange={(event) =>
+                    setEditForm((current) => (current ? { ...current, statusId: event.target.value } : current))
+                  }
+                >
+                  {masters.taskStatuses.map((status) => (
+                    <option key={status.id} value={status.id}>
+                      {status.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label style={{ display: "grid", gap: 4 }}>
+                担当
+                <select
+                  value={editForm.assigneeId}
+                  onChange={(event) =>
+                    setEditForm((current) => (current ? { ...current, assigneeId: event.target.value } : current))
+                  }
+                >
+                  <option value="">未割当</option>
+                  {masters.assignees.map((assignee) => (
+                    <option key={assignee.id} value={assignee.id}>
+                      {assignee.display_name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <label style={{ display: "grid", gap: 4 }}>
+                開始日
+                <input
+                  type="date"
+                  value={editForm.startDate}
+                  onChange={(event) =>
+                    setEditForm((current) => (current ? { ...current, startDate: event.target.value } : current))
+                  }
+                />
+              </label>
+
+              <label style={{ display: "grid", gap: 4 }}>
+                終了日
+                <input
+                  type="date"
+                  value={editForm.endDate}
+                  onChange={(event) =>
+                    setEditForm((current) => (current ? { ...current, endDate: event.target.value } : current))
+                  }
+                />
+              </label>
+            </div>
+
+            <label style={{ display: "grid", gap: 4 }}>
+              備考
+              <textarea
+                rows={3}
+                value={editForm.notes}
+                onChange={(event) =>
+                  setEditForm((current) => (current ? { ...current, notes: event.target.value } : current))
+                }
+              />
+            </label>
+
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+              <button
+                type="button"
+                className="danger"
+                onClick={async () => {
+                  if (!editForm) return;
+                  const deleted = await handleDeleteTask(editForm.taskId);
+                  if (deleted) {
+                    closeEditModal();
+                  }
+                }}
+              >
+                削除
+              </button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button type="button" onClick={closeEditModal}>
+                  キャンセル
+                </button>
+                <button className="primary" type="submit">
+                  保存
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
       ) : null}
     </main>
   );
@@ -1466,19 +2022,27 @@ function MasterEditor({
   title,
   resource,
   items,
+  toggleLabel,
   canEdit,
   onCreate,
-  onToggle
+  onToggle,
+  onRename,
+  onDelete
 }: {
   title: string;
   resource: string;
-  items: { id: string; label: string; active: boolean }[];
+  items: { id: string; label: string; toggle: boolean }[];
+  toggleLabel: string;
   canEdit: boolean;
   onCreate: (name: string) => Promise<void>;
-  onToggle: (id: string, active: boolean) => Promise<void>;
+  onToggle: (id: string, toggle: boolean) => Promise<void>;
+  onRename: (id: string, name: string) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
 }) {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [rowBusyId, setRowBusyId] = useState<string | null>(null);
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1516,27 +2080,80 @@ function MasterEditor({
 
       <div style={{ display: "grid", gap: 6 }}>
         {items.map((item) => (
-          <label
+          <div
             key={item.id}
             style={{
               display: "flex",
               justifyContent: "space-between",
-              alignItems: "center",
+              alignItems: "flex-start",
+              gap: 10,
               border: "1px solid var(--line)",
               borderRadius: 8,
               padding: "8px 10px"
             }}
           >
-            <span>{item.label}</span>
             <input
-              type="checkbox"
-              checked={item.active}
-              disabled={!canEdit}
+              value={drafts[item.id] ?? item.label}
+              disabled={!canEdit || rowBusyId === item.id}
               onChange={(event) => {
-                void onToggle(item.id, event.target.checked);
+                const value = event.target.value;
+                setDrafts((current) => ({ ...current, [item.id]: value }));
               }}
+              style={{ flex: 1 }}
             />
-          </label>
+
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+                {toggleLabel}
+                <input
+                  type="checkbox"
+                  checked={item.toggle}
+                  disabled={!canEdit || rowBusyId === item.id}
+                  onChange={async (event) => {
+                    if (!canEdit) return;
+                    setRowBusyId(item.id);
+                    try {
+                      await onToggle(item.id, event.target.checked);
+                    } finally {
+                      setRowBusyId(null);
+                    }
+                  }}
+                />
+              </label>
+              <button
+                type="button"
+                disabled={!canEdit || rowBusyId === item.id}
+                onClick={async () => {
+                  const candidate = (drafts[item.id] ?? item.label).trim();
+                  if (!candidate || candidate === item.label) return;
+                  setRowBusyId(item.id);
+                  try {
+                    await onRename(item.id, candidate);
+                  } finally {
+                    setRowBusyId(null);
+                  }
+                }}
+              >
+                保存
+              </button>
+              <button
+                type="button"
+                className="danger"
+                disabled={!canEdit || rowBusyId === item.id}
+                onClick={async () => {
+                  if (!window.confirm(`${item.label} を削除しますか？`)) return;
+                  setRowBusyId(item.id);
+                  try {
+                    await onDelete(item.id);
+                  } finally {
+                    setRowBusyId(null);
+                  }
+                }}
+              >
+                削除
+              </button>
+            </div>
+          </div>
         ))}
       </div>
     </div>
