@@ -1,0 +1,127 @@
+:root {
+  --bg: #f6f5f2;
+  --panel: #fcfbf8;
+  --panel-muted: #f1f0eb;
+  --line: #dfddd6;
+  --line-strong: #c5c1b8;
+  --text: #24211d;
+  --text-muted: #5d5851;
+  --brand: #2459cc;
+  --brand-soft: #dce7ff;
+  --danger: #b33636;
+  --green: #2f7f4f;
+  --row-h: 42px;
+  --header-h: 44px;
+  --radius: 10px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  background: radial-gradient(circle at 15% -20%, #ffffff, #f8f6f0 40%, #f2efe6 100%);
+  color: var(--text);
+  font-family: "BIZ UDPGothic", "Yu Gothic Medium", "Yu Gothic", "Hiragino Sans", "Meiryo", sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+main {
+  min-height: 100vh;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: #9e998f;
+}
+
+button.primary {
+  background: var(--brand);
+  color: #fff;
+  border-color: #1948b1;
+}
+
+button.danger {
+  background: #fff;
+  color: var(--danger);
+  border-color: #d9a6a6;
+}
+
+input,
+select,
+textarea {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  padding: 7px 10px;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 2px solid #c0d4ff;
+  outline-offset: 1px;
+}
+
+.app-shell {
+  padding: 20px;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 20px rgba(28, 24, 18, 0.04);
+}
+
+.headline {
+  font-family: "Palatino Linotype", "Baskerville", "Times New Roman", serif;
+  font-size: 1.8rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--panel-muted);
+  border: 1px solid var(--line);
+  font-size: 12px;
+}
+
+@media (max-width: 960px) {
+  .app-shell {
+    padding: 12px;
+  }
+}
