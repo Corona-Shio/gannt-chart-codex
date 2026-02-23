@@ -1647,7 +1647,11 @@ export function ScheduleDashboard({
     const endDate = preview?.endDate ?? task.end_date;
 
     if (!timelineDates.length) {
-      return { startIndex: 0, endIndex: 0, startDate, endDate };
+      return { startIndex: 0, endIndex: 0, startDate, endDate, isVisible: false };
+    }
+
+    if (endDate < rangeStart || startDate > rangeEnd) {
+      return { startIndex: 0, endIndex: 0, startDate, endDate, isVisible: false };
     }
 
     const lastIndex = timelineDates.length - 1;
@@ -1664,7 +1668,8 @@ export function ScheduleDashboard({
       startIndex: Math.min(rawStartIndex, rawEndIndex),
       endIndex: Math.max(rawStartIndex, rawEndIndex),
       startDate,
-      endDate
+      endDate,
+      isVisible: true
     };
   };
 
@@ -2589,111 +2594,113 @@ export function ScheduleDashboard({
                               />
                             ))}
 
-                            <div
-                              role="button"
-                              tabIndex={0}
-                              onClick={() => {
-                                if (!canWrite) return;
-                                if (suppressBarClickTaskIdRef.current === task.id) return;
-                                openEditModal(task);
-                              }}
-                              onPointerDown={(event) => {
-                                if (!canWrite) return;
-                                const lane = event.currentTarget.parentElement as HTMLElement;
-                                const index = indexFromPointer(event, lane);
-                                const pointerId = event.pointerId;
-                                lane.setPointerCapture(pointerId);
-                                const offset = index - range.startIndex;
-                                setBarInteraction({
-                                  taskId: task.id,
-                                  type: "move",
-                                  pointerId,
-                                  baseStartIndex: range.startIndex,
-                                  baseEndIndex: range.endIndex,
-                                  offsetDays: offset,
-                                  moved: false,
-                                  lastIndex: index
-                                });
-                              }}
-                              style={{
-                                position: "absolute",
-                                top: Math.max(1, Math.floor((TASK_ROW_HEIGHT - BAR_HEIGHT) / 2)),
-                                left: range.startIndex * DAY_WIDTH + 2,
-                                width: Math.max(DAY_WIDTH - 4, (range.endIndex - range.startIndex + 1) * DAY_WIDTH - 4),
-                                height: BAR_HEIGHT,
-                                borderRadius: 5,
-                                background: "linear-gradient(120deg, #4b8aff, #2b66d7)",
-                                color: "#fff",
-                                display: "flex",
-                                alignItems: "center",
-                                padding: "0 6px",
-                                fontSize: 10,
-                                cursor: canWrite ? "grab" : "default",
-                                userSelect: "none",
-                                overflow: "hidden",
-                                border: "1px solid rgba(255,255,255,0.15)"
-                              }}
-                            >
-                              <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{task.task_name}</span>
-                              <span
-                                onPointerDown={(event) => {
-                                  event.stopPropagation();
+                            {range.isVisible ? (
+                              <div
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => {
                                   if (!canWrite) return;
-                                  const lane = (event.currentTarget.parentElement?.parentElement as HTMLElement) ?? null;
-                                  if (!lane) return;
-                                  const pointerId = event.pointerId;
+                                  if (suppressBarClickTaskIdRef.current === task.id) return;
+                                  openEditModal(task);
+                                }}
+                                onPointerDown={(event) => {
+                                  if (!canWrite) return;
+                                  const lane = event.currentTarget.parentElement as HTMLElement;
                                   const index = indexFromPointer(event, lane);
+                                  const pointerId = event.pointerId;
                                   lane.setPointerCapture(pointerId);
+                                  const offset = index - range.startIndex;
                                   setBarInteraction({
                                     taskId: task.id,
-                                    type: "resize-start",
+                                    type: "move",
                                     pointerId,
                                     baseStartIndex: range.startIndex,
                                     baseEndIndex: range.endIndex,
-                                    offsetDays: 0,
+                                    offsetDays: offset,
                                     moved: false,
                                     lastIndex: index
                                   });
                                 }}
                                 style={{
                                   position: "absolute",
-                                  left: 0,
-                                  top: 0,
-                                  bottom: 0,
-                                  width: 8,
-                                  cursor: canWrite ? "ew-resize" : "default"
+                                  top: Math.max(1, Math.floor((TASK_ROW_HEIGHT - BAR_HEIGHT) / 2)),
+                                  left: range.startIndex * DAY_WIDTH + 2,
+                                  width: Math.max(DAY_WIDTH - 4, (range.endIndex - range.startIndex + 1) * DAY_WIDTH - 4),
+                                  height: BAR_HEIGHT,
+                                  borderRadius: 5,
+                                  background: "linear-gradient(120deg, #4b8aff, #2b66d7)",
+                                  color: "#fff",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  padding: "0 6px",
+                                  fontSize: 10,
+                                  cursor: canWrite ? "grab" : "default",
+                                  userSelect: "none",
+                                  overflow: "hidden",
+                                  border: "1px solid rgba(255,255,255,0.15)"
                                 }}
-                              />
-                              <span
-                                onPointerDown={(event) => {
-                                  event.stopPropagation();
-                                  if (!canWrite) return;
-                                  const lane = (event.currentTarget.parentElement?.parentElement as HTMLElement) ?? null;
-                                  if (!lane) return;
-                                  const pointerId = event.pointerId;
-                                  const index = indexFromPointer(event, lane);
-                                  lane.setPointerCapture(pointerId);
-                                  setBarInteraction({
-                                    taskId: task.id,
-                                    type: "resize-end",
-                                    pointerId,
-                                    baseStartIndex: range.startIndex,
-                                    baseEndIndex: range.endIndex,
-                                    offsetDays: 0,
-                                    moved: false,
-                                    lastIndex: index
-                                  });
-                                }}
-                                style={{
-                                  position: "absolute",
-                                  right: 0,
-                                  top: 0,
-                                  bottom: 0,
-                                  width: 8,
-                                  cursor: canWrite ? "ew-resize" : "default"
-                                }}
-                              />
-                            </div>
+                              >
+                                <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{task.task_name}</span>
+                                <span
+                                  onPointerDown={(event) => {
+                                    event.stopPropagation();
+                                    if (!canWrite) return;
+                                    const lane = (event.currentTarget.parentElement?.parentElement as HTMLElement) ?? null;
+                                    if (!lane) return;
+                                    const pointerId = event.pointerId;
+                                    const index = indexFromPointer(event, lane);
+                                    lane.setPointerCapture(pointerId);
+                                    setBarInteraction({
+                                      taskId: task.id,
+                                      type: "resize-start",
+                                      pointerId,
+                                      baseStartIndex: range.startIndex,
+                                      baseEndIndex: range.endIndex,
+                                      offsetDays: 0,
+                                      moved: false,
+                                      lastIndex: index
+                                    });
+                                  }}
+                                  style={{
+                                    position: "absolute",
+                                    left: 0,
+                                    top: 0,
+                                    bottom: 0,
+                                    width: 8,
+                                    cursor: canWrite ? "ew-resize" : "default"
+                                  }}
+                                />
+                                <span
+                                  onPointerDown={(event) => {
+                                    event.stopPropagation();
+                                    if (!canWrite) return;
+                                    const lane = (event.currentTarget.parentElement?.parentElement as HTMLElement) ?? null;
+                                    if (!lane) return;
+                                    const pointerId = event.pointerId;
+                                    const index = indexFromPointer(event, lane);
+                                    lane.setPointerCapture(pointerId);
+                                    setBarInteraction({
+                                      taskId: task.id,
+                                      type: "resize-end",
+                                      pointerId,
+                                      baseStartIndex: range.startIndex,
+                                      baseEndIndex: range.endIndex,
+                                      offsetDays: 0,
+                                      moved: false,
+                                      lastIndex: index
+                                    });
+                                  }}
+                                  style={{
+                                    position: "absolute",
+                                    right: 0,
+                                    top: 0,
+                                    bottom: 0,
+                                    width: 8,
+                                    cursor: canWrite ? "ew-resize" : "default"
+                                  }}
+                                />
+                              </div>
+                            ) : null}
                           </div>
                         </div>
                       </div>

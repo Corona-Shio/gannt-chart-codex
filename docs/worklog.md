@@ -257,3 +257,26 @@
   - push: 未実施（この記録時点）
 - 次回メモ:
   - 公開日件数が増えた場合は、`ReleaseDateTable` のページングや検索条件追加を検討する。
+
+## 2026-02-23 21:09 JST - 表示期間外タスクバーの非表示化
+- 背景:
+  - 表示期間に完全に含まれないタスクでも、端に1日分のバーが表示されていた。
+- 修正方針:
+  - 表示期間と重ならないタスクはバーを描画しない。
+  - 表示期間と重なるタスクのみ既存のクランプ表示とドラッグ操作を維持する。
+- 実施内容:
+  - `barRange` に `isVisible` を追加し、`endDate < rangeStart || startDate > rangeEnd` を非表示判定にした。
+  - タスクバー要素を `range.isVisible` 条件でレンダリングするように変更した。
+- 変更ファイル:
+  - `/Users/nakashioyuu/gantt-chart/components/schedule-dashboard.tsx`
+- 検証コマンドと結果:
+  - コマンド: `npm run lint`
+  - 結果: No ESLint warnings or errors
+  - コマンド: `npm run test`
+  - 結果: 17 tests passed
+- Git情報（branch / commit / push有無）:
+  - branch: `main`
+  - commit: （この記録時点では未コミット）
+  - push: （この記録時点では未実施）
+- 次回メモ:
+  - 表示期間外タスクを左側一覧ごと非表示にしたい要望が出た場合は、`group.items` 生成時の表示期間フィルタ追加を検討する。
