@@ -54,8 +54,8 @@
   - 結果: 17 tests passed
 - Git:
   - branch: `main`
-  - commit: 未コミット（このエントリ時点）
-  - push: 未実施
+  - commit: `a94cebb`
+  - push: `origin/main` へ反映済み
 - 次回メモ:
   - 実機確認で上段高さをさらに揃えたい場合は `TOP_PANEL_MIN_HEIGHT` / `TOP_PANEL_DETAIL_MIN_HEIGHT` をデザイン基準で微調整する。
 
