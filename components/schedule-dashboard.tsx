@@ -45,6 +45,7 @@ const LEFT_WIDTH =
 const WEEKDAY_JA = ["日", "月", "火", "水", "木", "金", "土"] as const;
 const RELEASE_ROW_TONES = ["#dfe8f7", "#f0e4d1", "#efe9d7", "#f3e8d7", "#e3ebdd", "#ebe2f2"] as const;
 const NON_WORKING_DAY_BG = "#ececec";
+const TODAY_COLUMN_BG = "#fff1a8";
 const TIMELINE_GRID_BORDER = "#b8b8b8";
 
 type GroupBy = "channel" | "none";
@@ -96,6 +97,7 @@ type TimelineDayCell = {
   monthKey: string;
   monthLabel: string;
   isNonWorkingDay: boolean;
+  isToday: boolean;
 };
 
 type TimelineMonthGroup = {
@@ -320,6 +322,7 @@ export function ScheduleDashboard({
   userEmail: string;
 }) {
   const now = useMemo(() => new Date(), []);
+  const todayDate = useMemo(() => today(), []);
   const [rangeStart, setRangeStart] = useState(fmtDate(subDays(startOfMonth(addMonths(now, -1)), 0)));
   const [rangeEnd, setRangeEnd] = useState(fmtDate(addDays(endOfMonth(addMonths(now, 1)), 0)));
 
@@ -1236,9 +1239,10 @@ export function ScheduleDashboard({
         weekdayLabel: toWeekdayLabel(date),
         monthKey: format(parseISO(date), "yyyy-MM"),
         monthLabel: toMonthLabel(date),
-        isNonWorkingDay: isNonWorkingDay(date)
+        isNonWorkingDay: isNonWorkingDay(date),
+        isToday: date === todayDate
       })),
-    [timelineDates]
+    [timelineDates, todayDate]
   );
 
   const timelineMonthGroups = useMemo<TimelineMonthGroup[]>(() => {
@@ -1781,7 +1785,8 @@ export function ScheduleDashboard({
                         color: "#2e3745",
                         fontWeight: 700,
                         display: "grid",
-                        placeItems: "center"
+                        placeItems: "center",
+                        background: dayCell.isToday ? TODAY_COLUMN_BG : "transparent"
                       }}
                     >
                       {dayCell.dayLabel}
@@ -1808,7 +1813,8 @@ export function ScheduleDashboard({
                         color: "#4b5565",
                         fontWeight: 700,
                         display: "grid",
-                        placeItems: "center"
+                        placeItems: "center",
+                        background: dayCell.isToday ? TODAY_COLUMN_BG : "transparent"
                       }}
                     >
                       {dayCell.weekdayLabel}
@@ -1957,7 +1963,11 @@ export function ScheduleDashboard({
                                   width: DAY_WIDTH,
                                   borderLeft: `1px solid ${TIMELINE_GRID_BORDER}`,
                                   borderTop: `1px solid ${TIMELINE_GRID_BORDER}`,
-                                  background: dayCell.isNonWorkingDay ? NON_WORKING_DAY_BG : "transparent"
+                                  background: dayCell.isToday
+                                    ? TODAY_COLUMN_BG
+                                    : dayCell.isNonWorkingDay
+                                      ? NON_WORKING_DAY_BG
+                                      : "transparent"
                                 }}
                               />
                             ))}
@@ -2171,7 +2181,11 @@ export function ScheduleDashboard({
                               bottom: 0,
                               borderLeft: `1px solid ${TIMELINE_GRID_BORDER}`,
                               borderTop: `1px solid ${TIMELINE_GRID_BORDER}`,
-                              background: dayCell.isNonWorkingDay ? NON_WORKING_DAY_BG : "transparent"
+                              background: dayCell.isToday
+                                ? TODAY_COLUMN_BG
+                                : dayCell.isNonWorkingDay
+                                  ? NON_WORKING_DAY_BG
+                                  : "transparent"
                             }}
                           />
                         ))}
