@@ -82,7 +82,6 @@ type EditTaskForm = CreateTaskForm & {
 type ReleaseForm = {
   channelId: string;
   scriptNo: string;
-  scriptTitle: string;
   releaseDate: string;
   label: string;
 };
@@ -212,7 +211,6 @@ export function ScheduleDashboard({
   const [releaseForm, setReleaseForm] = useState<ReleaseForm>({
     channelId: "",
     scriptNo: "",
-    scriptTitle: "",
     releaseDate: today(),
     label: ""
   });
@@ -366,16 +364,6 @@ export function ScheduleDashboard({
       .filter((group) => group.items.length > 0 || groupBy === "channel");
   }, [groupBy, tasks, masters.channels]);
 
-  const knownScripts = useMemo(() => {
-    const map = new Map<string, { scriptNo: string; title: string }>();
-    for (const task of tasks) {
-      if (!map.has(task.script_no)) {
-        map.set(task.script_no, { scriptNo: task.script_no, title: task.script_title ?? "" });
-      }
-    }
-    return [...map.values()];
-  }, [tasks]);
-
   const openCreateModal = (draft: CreateDraft) => {
     const defaultTaskType = masters.taskTypes[0]?.id ?? "";
     const defaultStatus = masters.taskStatuses[0]?.id ?? "";
@@ -481,8 +469,7 @@ export function ScheduleDashboard({
     }
   };
 
-  const handleSaveReleaseDate = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const handleSaveReleaseDate = async () => {
     try {
       await fetchJson("/api/release-dates", {
         method: "POST",
@@ -490,12 +477,11 @@ export function ScheduleDashboard({
           workspaceId,
           channelId: releaseForm.channelId,
           scriptNo: releaseForm.scriptNo,
-          scriptTitle: releaseForm.scriptTitle || undefined,
           releaseDate: releaseForm.releaseDate,
           label: releaseForm.label || undefined
         })
       });
-      setReleaseForm((current) => ({ ...current, scriptNo: "", scriptTitle: "", label: "" }));
+      setReleaseForm((current) => ({ ...current, scriptNo: "", label: "" }));
       await loadReleaseDates();
     } catch (releaseError) {
       setError(releaseError instanceof Error ? releaseError.message : "公開日更新に失敗しました");
@@ -1633,7 +1619,6 @@ export function ScheduleDashboard({
               channels={masters.channels}
               releaseDates={releaseDates}
               releaseForm={releaseForm}
-              knownScripts={knownScripts}
               onReleaseFormChange={setReleaseForm}
               onCreate={handleSaveReleaseDate}
               onSave={handlePatchReleaseDate}
@@ -2091,7 +2076,6 @@ function ReleaseDateTable({
   channels,
   releaseDates,
   releaseForm,
-  knownScripts,
   onReleaseFormChange,
   onCreate,
   onSave,
@@ -2101,12 +2085,12 @@ function ReleaseDateTable({
   channels: Channel[];
   releaseDates: ReleaseDateRow[];
   releaseForm: ReleaseForm;
-  knownScripts: { scriptNo: string; title: string }[];
   onReleaseFormChange: React.Dispatch<React.SetStateAction<ReleaseForm>>;
-  onCreate: (event: React.FormEvent<HTMLFormElement>) => Promise<void>;
+  onCreate: () => Promise<void>;
   onSave: (id: string, patch: { releaseDate?: string; label?: string | null }) => Promise<boolean>;
   onDelete: (id: string) => Promise<boolean>;
 }) {
+  const [busy, setBusy] = useState(false);
   const [rowBusyId, setRowBusyId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, { releaseDate: string; label: string }>>({});
 
@@ -2126,66 +2110,6 @@ function ReleaseDateTable({
 
   return (
     <div style={{ display: "grid", gap: 10 }}>
-      <form
-        onSubmit={(event) => {
-          void onCreate(event);
-        }}
-        style={{ display: "grid", gap: 8, gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr auto" }}
-      >
-        <select
-          value={releaseForm.channelId}
-          onChange={(event) => onReleaseFormChange((current) => ({ ...current, channelId: event.target.value }))}
-          required
-          disabled={!canEdit}
-        >
-          {channels.map((channel) => (
-            <option key={channel.id} value={channel.id}>
-              {channel.name}
-            </option>
-          ))}
-        </select>
-
-        <input
-          value={releaseForm.scriptNo}
-          placeholder="脚本番号"
-          onChange={(event) => onReleaseFormChange((current) => ({ ...current, scriptNo: event.target.value }))}
-          required
-          disabled={!canEdit}
-        />
-
-        <input
-          value={releaseForm.scriptTitle}
-          placeholder="タイトル(任意)"
-          onChange={(event) => onReleaseFormChange((current) => ({ ...current, scriptTitle: event.target.value }))}
-          disabled={!canEdit}
-        />
-
-        <input
-          type="date"
-          value={releaseForm.releaseDate}
-          onChange={(event) => onReleaseFormChange((current) => ({ ...current, releaseDate: event.target.value }))}
-          required
-          disabled={!canEdit}
-        />
-
-        <input
-          value={releaseForm.label}
-          placeholder="ラベル(任意)"
-          onChange={(event) => onReleaseFormChange((current) => ({ ...current, label: event.target.value }))}
-          disabled={!canEdit}
-        />
-
-        <button className="primary" type="submit" disabled={!canEdit}>
-          追加
-        </button>
-      </form>
-
-      {knownScripts.length ? (
-        <div className="muted" style={{ fontSize: 12 }}>
-          既存脚本番号: {knownScripts.map((script) => script.scriptNo).join(", ")}
-        </div>
-      ) : null}
-
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 880 }}>
           <thead>
@@ -2293,6 +2217,65 @@ function ReleaseDateTable({
               );
             })}
 
+            <tr style={{ background: "#fffdf8" }}>
+              <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>
+                <select
+                  value={releaseForm.channelId}
+                  disabled={!canEdit || busy}
+                  onChange={(event) => onReleaseFormChange((current) => ({ ...current, channelId: event.target.value }))}
+                >
+                  {channels.map((channel) => (
+                    <option key={channel.id} value={channel.id}>
+                      {channel.name}
+                    </option>
+                  ))}
+                </select>
+              </td>
+              <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>
+                <input
+                  value={releaseForm.scriptNo}
+                  placeholder="脚本番号"
+                  disabled={!canEdit || busy}
+                  onChange={(event) => onReleaseFormChange((current) => ({ ...current, scriptNo: event.target.value }))}
+                />
+              </td>
+              <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>
+                <input
+                  type="date"
+                  value={releaseForm.releaseDate}
+                  disabled={!canEdit || busy}
+                  onChange={(event) => onReleaseFormChange((current) => ({ ...current, releaseDate: event.target.value }))}
+                />
+              </td>
+              <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>
+                <input
+                  value={releaseForm.label}
+                  placeholder="ラベル(任意)"
+                  disabled={!canEdit || busy}
+                  onChange={(event) => onReleaseFormChange((current) => ({ ...current, label: event.target.value }))}
+                />
+              </td>
+              <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={!canEdit || busy || !releaseForm.channelId || !releaseForm.scriptNo.trim() || !releaseForm.releaseDate}
+                  onClick={async () => {
+                    if (!releaseForm.channelId || !releaseForm.scriptNo.trim() || !releaseForm.releaseDate) return;
+
+                    setBusy(true);
+                    try {
+                      await onCreate();
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  追加
+                </button>
+              </td>
+            </tr>
+
             {!rows.length ? (
               <tr>
                 <td colSpan={5} className="muted" style={{ padding: 12, border: "1px solid var(--line)" }}>
@@ -2303,6 +2286,7 @@ function ReleaseDateTable({
           </tbody>
         </table>
       </div>
+      {!canEdit ? <div className="muted">編集権限ユーザーのみ編集できます。</div> : null}
     </div>
   );
 }
