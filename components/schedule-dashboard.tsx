@@ -7,6 +7,7 @@ import {
   parseISO,
   startOfMonth,
   startOfWeek,
+  startOfYear,
   subDays
 } from "date-fns";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -408,7 +409,9 @@ export function ScheduleDashboard({
   const now = useMemo(() => new Date(), []);
   const todayDate = useMemo(() => today(), []);
   const defaultRangeStartDate = useMemo(() => fmtDate(startOfMonth(addMonths(now, -1))), [now]);
-  const sundayStartDate = useMemo(() => fmtDate(startOfWeek(now, { weekStartsOn: 0 })), [now]);
+  const weekStartDate = useMemo(() => fmtDate(startOfWeek(now, { weekStartsOn: 0 })), [now]);
+  const monthStartDate = useMemo(() => fmtDate(startOfMonth(now)), [now]);
+  const yearStartDate = useMemo(() => fmtDate(startOfYear(now)), [now]);
   const [rangeStart, setRangeStart] = useState(defaultRangeStartDate);
   const [rangeMonths, setRangeMonths] = useState<RangeMonths>(3);
   const rangeEnd = useMemo(() => calcRangeEnd(rangeStart, rangeMonths), [rangeStart, rangeMonths]);
@@ -714,14 +717,28 @@ export function ScheduleDashboard({
     }
   }, [masters.channels, releaseForm.channelId]);
 
-  const rangeStartPreset: "today" | "week" | "custom" =
-    rangeStart === todayDate ? "today" : rangeStart === sundayStartDate ? "week" : "custom";
+  const rangeStartPreset: "week" | "month" | "year" | "custom" =
+    rangeStart === weekStartDate
+      ? "week"
+      : rangeStart === monthStartDate
+        ? "month"
+        : rangeStart === yearStartDate
+          ? "year"
+          : "custom";
 
   const applyStartPreset = useCallback(
-    (preset: "today" | "week") => {
-      setRangeStart(preset === "today" ? todayDate : sundayStartDate);
+    (preset: "week" | "month" | "year") => {
+      if (preset === "week") {
+        setRangeStart(weekStartDate);
+        return;
+      }
+      if (preset === "month") {
+        setRangeStart(monthStartDate);
+        return;
+      }
+      setRangeStart(yearStartDate);
     },
-    [todayDate, sundayStartDate]
+    [weekStartDate, monthStartDate, yearStartDate]
   );
 
   const addSortRule = useCallback(() => {
@@ -1785,19 +1802,27 @@ export function ScheduleDashboard({
                 />
                 <button
                   type="button"
-                  className={rangeStartPreset === "today" ? "primary" : undefined}
-                  onClick={() => applyStartPreset("today")}
-                  style={{ padding: "5px 10px", borderRadius: 999, fontSize: 12 }}
-                >
-                  今日
-                </button>
-                <button
-                  type="button"
                   className={rangeStartPreset === "week" ? "primary" : undefined}
                   onClick={() => applyStartPreset("week")}
                   style={{ padding: "5px 10px", borderRadius: 999, fontSize: 12 }}
                 >
                   今週
+                </button>
+                <button
+                  type="button"
+                  className={rangeStartPreset === "month" ? "primary" : undefined}
+                  onClick={() => applyStartPreset("month")}
+                  style={{ padding: "5px 10px", borderRadius: 999, fontSize: 12 }}
+                >
+                  今月
+                </button>
+                <button
+                  type="button"
+                  className={rangeStartPreset === "year" ? "primary" : undefined}
+                  onClick={() => applyStartPreset("year")}
+                  style={{ padding: "5px 10px", borderRadius: 999, fontSize: 12 }}
+                >
+                  今年
                 </button>
                 <span className="muted" style={{ fontSize: 12, fontWeight: 700, marginLeft: 2 }}>
                   表示範囲
