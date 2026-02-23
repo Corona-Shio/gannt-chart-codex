@@ -76,11 +76,13 @@ type SortRule = {
   direction: SortDirection;
 };
 
+type FilterFieldKey = "channel" | "assignee" | "status" | "taskType";
+
 type Filters = {
-  channelId: string;
-  assigneeId: string;
-  statusId: string;
-  taskTypeId: string;
+  channelIds: string[];
+  assigneeIds: string[];
+  statusIds: string[];
+  taskTypeIds: string[];
 };
 
 type CreateDraft = {
@@ -211,6 +213,15 @@ const SORT_FIELD_LABELS: Record<SortField, string> = {
   status_name: "ステータス",
   task_type_name: "タスク種"
 };
+
+const FILTER_FIELD_LABELS: Record<FilterFieldKey, string> = {
+  channel: "チャンネル",
+  assignee: "担当",
+  status: "ステータス",
+  taskType: "タスク種"
+};
+
+const FILTER_FIELD_ORDER: FilterFieldKey[] = ["channel", "assignee", "status", "taskType"];
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -421,10 +432,10 @@ export function ScheduleDashboard({
   const [sortRules, setSortRules] = useState<SortRule[]>(() => [createSortRule("script_no", "asc")]);
   const sortRulesRef = useRef<SortRule[]>(sortRules);
   const [filters, setFilters] = useState<Filters>({
-    channelId: "all",
-    assigneeId: "all",
-    statusId: "all",
-    taskTypeId: "all"
+    channelIds: [],
+    assigneeIds: [],
+    statusIds: [],
+    taskTypeIds: []
   });
 
   const [masters, setMasters] = useState<MasterState>(emptyMasters);
@@ -451,7 +462,9 @@ export function ScheduleDashboard({
   const [bulkImportBusy, setBulkImportBusy] = useState(false);
   const [bulkImportMessage, setBulkImportMessage] = useState("");
   const [sortEditorOpen, setSortEditorOpen] = useState(false);
-  const [filterEditorOpen, setFilterEditorOpen] = useState(false);
+  const [filterAttributePickerOpen, setFilterAttributePickerOpen] = useState(false);
+  const [activeFilterFields, setActiveFilterFields] = useState<FilterFieldKey[]>([]);
+  const [activeFilterFieldEditor, setActiveFilterFieldEditor] = useState<FilterFieldKey | null>(null);
 
   const [laneInteraction, setLaneInteraction] = useState<LaneInteraction | null>(null);
   const [barInteraction, setBarInteraction] = useState<BarInteraction | null>(null);
@@ -465,6 +478,9 @@ export function ScheduleDashboard({
   const timelineMonthBadgeRef = useRef<HTMLSpanElement | null>(null);
   const monthLabelScrollRafRef = useRef<number | null>(null);
   const pendingMonthLabelScrollLeftRef = useRef(0);
+  const sortEditorContainerRef = useRef<HTMLDivElement | null>(null);
+  const sortEditorButtonRef = useRef<HTMLButtonElement | null>(null);
+  const filterControlsRef = useRef<HTMLDivElement | null>(null);
 
   const canWrite = role === "admin" || role === "editor";
   const canAdmin = role === "admin";
@@ -535,10 +551,10 @@ export function ScheduleDashboard({
       workspaceId
     });
 
-    if (filters.channelId !== "all") params.set("channelIds", filters.channelId);
-    if (filters.assigneeId !== "all") params.set("assigneeIds", filters.assigneeId);
-    if (filters.statusId !== "all") params.set("statusIds", filters.statusId);
-    if (filters.taskTypeId !== "all") params.set("taskTypeIds", filters.taskTypeId);
+    if (filters.channelIds.length) params.set("channelIds", filters.channelIds.join(","));
+    if (filters.assigneeIds.length) params.set("assigneeIds", filters.assigneeIds.join(","));
+    if (filters.statusIds.length) params.set("statusIds", filters.statusIds.join(","));
+    if (filters.taskTypeIds.length) params.set("taskTypeIds", filters.taskTypeIds.join(","));
 
     const rows = await fetchJson<TaskRow[]>(`/api/tasks?${params.toString()}`);
     setTasks(sortTaskRows(rows, sortRulesRef.current));
@@ -552,10 +568,11 @@ export function ScheduleDashboard({
 
   const isTaskVisibleWithCurrentFilters = useCallback(
     (task: TaskRow) => {
-      if (filters.channelId !== "all" && task.channel_id !== filters.channelId) return false;
-      if (filters.assigneeId !== "all" && task.assignee_id !== filters.assigneeId) return false;
-      if (filters.statusId !== "all" && task.status_id !== filters.statusId) return false;
-      if (filters.taskTypeId !== "all" && task.task_type_id !== filters.taskTypeId) return false;
+      if (filters.channelIds.length && !filters.channelIds.includes(task.channel_id)) return false;
+      if (filters.assigneeIds.length && !task.assignee_id) return false;
+      if (filters.assigneeIds.length && task.assignee_id && !filters.assigneeIds.includes(task.assignee_id)) return false;
+      if (filters.statusIds.length && !filters.statusIds.includes(task.status_id)) return false;
+      if (filters.taskTypeIds.length && !filters.taskTypeIds.includes(task.task_type_id)) return false;
       return true;
     },
     [filters]
@@ -671,6 +688,41 @@ export function ScheduleDashboard({
   }, [sortRules]);
 
   useEffect(() => {
+    if (!sortEditorOpen && !filterAttributePickerOpen && !activeFilterFieldEditor) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+
+      const clickedSortEditor = sortEditorContainerRef.current?.contains(target) ?? false;
+      const clickedSortButton = sortEditorButtonRef.current?.contains(target) ?? false;
+      const clickedFilterArea = filterControlsRef.current?.contains(target) ?? false;
+
+      if (sortEditorOpen && !clickedSortEditor && !clickedSortButton) {
+        setSortEditorOpen(false);
+      }
+      if (!clickedFilterArea) {
+        setFilterAttributePickerOpen(false);
+        setActiveFilterFieldEditor(null);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setSortEditorOpen(false);
+      setFilterAttributePickerOpen(false);
+      setActiveFilterFieldEditor(null);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [sortEditorOpen, filterAttributePickerOpen, activeFilterFieldEditor]);
+
+  useEffect(() => {
     return () => {
       if (taskReloadTimerRef.current !== null) {
         window.clearTimeout(taskReloadTimerRef.current);
@@ -780,11 +832,14 @@ export function ScheduleDashboard({
 
   const clearFilters = useCallback(() => {
     setFilters({
-      channelId: "all",
-      assigneeId: "all",
-      statusId: "all",
-      taskTypeId: "all"
+      channelIds: [],
+      assigneeIds: [],
+      statusIds: [],
+      taskTypeIds: []
     });
+    setActiveFilterFields([]);
+    setFilterAttributePickerOpen(false);
+    setActiveFilterFieldEditor(null);
   }, []);
 
   const sortSummaryLabel = useMemo(
@@ -792,27 +847,83 @@ export function ScheduleDashboard({
     [sortRules]
   );
 
-  const activeFilterLabels = useMemo(() => {
-    const labels: string[] = [];
-    if (filters.channelId !== "all") {
-      const channelName = masters.channels.find((channel) => channel.id === filters.channelId)?.name ?? "チャンネル指定";
-      labels.push(`チャンネル: ${channelName}`);
-    }
-    if (filters.assigneeId !== "all") {
-      const assigneeName =
-        masters.assignees.find((assignee) => assignee.id === filters.assigneeId)?.display_name ?? "担当者指定";
-      labels.push(`担当: ${assigneeName}`);
-    }
-    if (filters.statusId !== "all") {
-      const statusName = masters.taskStatuses.find((status) => status.id === filters.statusId)?.name ?? "ステータス指定";
-      labels.push(`ステータス: ${statusName}`);
-    }
-    if (filters.taskTypeId !== "all") {
-      const taskTypeName = masters.taskTypes.find((taskType) => taskType.id === filters.taskTypeId)?.name ?? "タスク種指定";
-      labels.push(`タスク種: ${taskTypeName}`);
-    }
-    return labels;
-  }, [filters, masters.channels, masters.assignees, masters.taskStatuses, masters.taskTypes]);
+  const filterOptionsByField = useMemo(
+    () => ({
+      channel: masters.channels.map((channel) => ({ id: channel.id, label: channel.name })),
+      assignee: masters.assignees.map((assignee) => ({ id: assignee.id, label: assignee.display_name })),
+      status: masters.taskStatuses.map((status) => ({ id: status.id, label: status.name })),
+      taskType: masters.taskTypes.map((taskType) => ({ id: taskType.id, label: taskType.name }))
+    }),
+    [masters.channels, masters.assignees, masters.taskStatuses, masters.taskTypes]
+  );
+
+  const filterLabelMapByField = useMemo(
+    () => ({
+      channel: new Map(filterOptionsByField.channel.map((option) => [option.id, option.label])),
+      assignee: new Map(filterOptionsByField.assignee.map((option) => [option.id, option.label])),
+      status: new Map(filterOptionsByField.status.map((option) => [option.id, option.label])),
+      taskType: new Map(filterOptionsByField.taskType.map((option) => [option.id, option.label]))
+    }),
+    [filterOptionsByField]
+  );
+
+  const getFilterValues = useCallback(
+    (field: FilterFieldKey) => {
+      if (field === "channel") return filters.channelIds;
+      if (field === "assignee") return filters.assigneeIds;
+      if (field === "status") return filters.statusIds;
+      return filters.taskTypeIds;
+    },
+    [filters]
+  );
+
+  const updateFilterValues = useCallback((field: FilterFieldKey, nextValues: string[]) => {
+    setFilters((current) => {
+      if (field === "channel") return { ...current, channelIds: nextValues };
+      if (field === "assignee") return { ...current, assigneeIds: nextValues };
+      if (field === "status") return { ...current, statusIds: nextValues };
+      return { ...current, taskTypeIds: nextValues };
+    });
+  }, []);
+
+  const toggleFilterValue = useCallback(
+    (field: FilterFieldKey, optionId: string) => {
+      const currentValues = getFilterValues(field);
+      const nextValues = currentValues.includes(optionId)
+        ? currentValues.filter((id) => id !== optionId)
+        : [...currentValues, optionId];
+      updateFilterValues(field, nextValues);
+    },
+    [getFilterValues, updateFilterValues]
+  );
+
+  const addFilterField = useCallback((field: FilterFieldKey) => {
+    setActiveFilterFields((current) => (current.includes(field) ? current : [...current, field]));
+    setFilterAttributePickerOpen(false);
+    setActiveFilterFieldEditor(field);
+  }, []);
+
+  const removeFilterField = useCallback((field: FilterFieldKey) => {
+    setActiveFilterFields((current) => current.filter((currentField) => currentField !== field));
+    updateFilterValues(field, []);
+    setActiveFilterFieldEditor((current) => (current === field ? null : current));
+  }, [updateFilterValues]);
+
+  const formatFilterChipLabel = useCallback(
+    (field: FilterFieldKey) => {
+      const selectedIds = getFilterValues(field);
+      const label = FILTER_FIELD_LABELS[field];
+      if (!selectedIds.length) return label;
+
+      const labelMap = filterLabelMapByField[field];
+      const firstLabel = labelMap.get(selectedIds[0]) ?? "選択中";
+      if (selectedIds.length === 1) {
+        return `${label}: ${firstLabel}`;
+      }
+      return `${label}: ${firstLabel} +${selectedIds.length - 1}`;
+    },
+    [getFilterValues, filterLabelMapByField]
+  );
 
   const grouped = useMemo(() => {
     if (groupBy === "none") {
@@ -1477,12 +1588,12 @@ export function ScheduleDashboard({
       if (releaseDate.release_date < rangeStart || releaseDate.release_date > rangeEnd) {
         return false;
       }
-      if (filters.channelId !== "all" && releaseDate.channel_id !== filters.channelId) {
+      if (filters.channelIds.length && !filters.channelIds.includes(releaseDate.channel_id)) {
         return false;
       }
       return true;
     });
-  }, [releaseDates, rangeStart, rangeEnd, filters.channelId]);
+  }, [releaseDates, rangeStart, rangeEnd, filters.channelIds]);
 
   const releaseMaxStackByChannel = useMemo(() => {
     const perChannelDateCount = new Map<string, Map<string, number>>();
@@ -1545,8 +1656,9 @@ export function ScheduleDashboard({
 
   const releaseBandRows = useMemo<ChannelReleaseBandRow[]>(() => {
     const sortedChannels = [...masters.channels].sort((a, b) => a.sort_order - b.sort_order);
-    const scopedChannels =
-      filters.channelId === "all" ? sortedChannels : sortedChannels.filter((channel) => channel.id === filters.channelId);
+    const scopedChannels = filters.channelIds.length
+      ? sortedChannels.filter((channel) => filters.channelIds.includes(channel.id))
+      : sortedChannels;
     const channelsWithRelease = new Set(visibleReleaseDates.map((releaseDate) => releaseDate.channel_id));
     const rows = scopedChannels.filter((channel) => channelsWithRelease.has(channel.id));
 
@@ -1581,7 +1693,7 @@ export function ScheduleDashboard({
         height: RELEASE_BAND_ROW_HEIGHT * maxStack
       };
     });
-  }, [masters.channels, visibleReleaseDates, filters.channelId]);
+  }, [masters.channels, visibleReleaseDates, filters.channelIds]);
 
   const releaseBandCellMap = useMemo(() => {
     const map = new Map<string, ReleaseDateRow[]>();
@@ -1902,50 +2014,45 @@ export function ScheduleDashboard({
                   aria-hidden
                   style={{ width: 1, height: 18, background: "var(--line-strong)", display: "inline-block", margin: "0 4px" }}
                 />
-                <button
-                  type="button"
-                  className={sortEditorOpen ? "primary" : undefined}
-                  onClick={() => setSortEditorOpen((current) => !current)}
-                  style={{ padding: "4px 10px", borderRadius: 999, fontSize: 12 }}
-                >
-                  ＋並び替え
-                </button>
-                <span className="badge" style={{ maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {sortSummaryLabel}
-                </span>
-                <span
-                  aria-hidden
-                  style={{ width: 1, height: 18, background: "var(--line-strong)", display: "inline-block", margin: "0 4px" }}
-                />
-                <button
-                  type="button"
-                  className={filterEditorOpen ? "primary" : undefined}
-                  onClick={() => setFilterEditorOpen((current) => !current)}
-                  style={{ padding: "4px 10px", borderRadius: 999, fontSize: 12 }}
-                >
-                  ＋フィルター
-                </button>
-                {activeFilterLabels.length ? (
-                  <>
-                    {activeFilterLabels.map((label) => (
-                      <span key={label} className="badge" style={{ fontSize: 11, background: "#eef3fe", borderColor: "#cddaf4" }}>
-                        {label}
-                      </span>
-                    ))}
-                  </>
-                ) : (
-                  <span className="muted" style={{ fontSize: 12 }}>
-                    フィルターなし
-                  </span>
-                )}
-              </div>
-
-              {sortEditorOpen || filterEditorOpen ? (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 8, paddingTop: 6 }}>
+                <div style={{ position: "relative", display: "inline-flex" }}>
+                  <button
+                    ref={sortEditorButtonRef}
+                    type="button"
+                    className={sortEditorOpen ? "primary" : undefined}
+                    onClick={() => {
+                      setSortEditorOpen((current) => {
+                        const next = !current;
+                        if (next) {
+                          setFilterAttributePickerOpen(false);
+                          setActiveFilterFieldEditor(null);
+                        }
+                        return next;
+                      });
+                    }}
+                    style={{ padding: "4px 10px", borderRadius: 999, fontSize: 12 }}
+                    aria-expanded={sortEditorOpen}
+                    aria-haspopup="dialog"
+                  >
+                    ＋並び替え
+                  </button>
                   {sortEditorOpen ? (
                     <div
+                      ref={sortEditorContainerRef}
                       className="card"
-                      style={{ padding: 9, display: "grid", gap: 6, background: "#f5f8ff", borderColor: "#cdd7ee", alignContent: "start" }}
+                      style={{
+                        position: "absolute",
+                        top: "calc(100% + 8px)",
+                        left: 0,
+                        zIndex: 42,
+                        width: "min(560px, calc(100vw - 56px))",
+                        padding: 9,
+                        display: "grid",
+                        gap: 6,
+                        background: "#f5f8ff",
+                        borderColor: "#cdd7ee",
+                        alignContent: "start",
+                        boxShadow: "0 14px 28px rgba(22, 27, 42, 0.18)"
+                      }}
                     >
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                         <strong style={{ fontSize: 12 }}>並び順を編集</strong>
@@ -2023,87 +2130,173 @@ export function ScheduleDashboard({
                       </div>
                     </div>
                   ) : null}
-
-                  {filterEditorOpen ? (
-                    <div
-                      className="card"
-                      style={{ padding: 9, display: "grid", gap: 6, background: "#f5f8ff", borderColor: "#cdd7ee", alignContent: "start" }}
+                </div>
+                <span className="badge" style={{ maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {sortSummaryLabel}
+                </span>
+                <span
+                  aria-hidden
+                  style={{ width: 1, height: 18, background: "var(--line-strong)", display: "inline-block", margin: "0 4px" }}
+                />
+                <div ref={filterControlsRef} style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", position: "relative" }}>
+                  <div style={{ position: "relative", display: "inline-flex" }}>
+                    <button
+                      type="button"
+                      className={filterAttributePickerOpen ? "primary" : undefined}
+                      onClick={() => {
+                        setFilterAttributePickerOpen((current) => {
+                          const next = !current;
+                          if (next) {
+                            setSortEditorOpen(false);
+                            setActiveFilterFieldEditor(null);
+                          }
+                          return next;
+                        });
+                      }}
+                      style={{ padding: "4px 10px", borderRadius: 999, fontSize: 12 }}
+                      aria-expanded={filterAttributePickerOpen}
+                      aria-haspopup="dialog"
                     >
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                        <strong style={{ fontSize: 12 }}>フィルターを編集</strong>
+                      ＋フィルター
+                    </button>
+                    {filterAttributePickerOpen ? (
+                      <div
+                        className="card"
+                        style={{
+                          position: "absolute",
+                          top: "calc(100% + 8px)",
+                          right: 0,
+                          zIndex: 42,
+                          width: "min(280px, calc(100vw - 56px))",
+                          padding: 9,
+                          display: "grid",
+                          gap: 6,
+                          background: "#f5f8ff",
+                          borderColor: "#cdd7ee",
+                          alignContent: "start",
+                          boxShadow: "0 14px 28px rgba(22, 27, 42, 0.18)"
+                        }}
+                      >
+                        <strong style={{ fontSize: 12 }}>属性を選択</strong>
+                        <div style={{ display: "grid", gap: 4 }}>
+                          {FILTER_FIELD_ORDER.map((field) => {
+                            const selectedCount = getFilterValues(field).length;
+                            const isAdded = activeFilterFields.includes(field);
+                            return (
+                              <button
+                                key={`filter-field-${field}`}
+                                type="button"
+                                onClick={() => addFilterField(field)}
+                                style={{ padding: "6px 8px", fontSize: 12, display: "flex", justifyContent: "space-between", gap: 6 }}
+                              >
+                                <span>{FILTER_FIELD_LABELS[field]}</span>
+                                {isAdded ? (
+                                  <span className="badge" style={{ padding: "2px 6px", fontSize: 10 }}>
+                                    {selectedCount ? `${selectedCount}件` : "追加済み"}
+                                  </span>
+                                ) : null}
+                              </button>
+                            );
+                          })}
+                        </div>
                         <button type="button" onClick={clearFilters} style={{ padding: "4px 9px", borderRadius: 8, fontSize: 12 }}>
-                          解除
+                          すべて解除
                         </button>
                       </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 6 }}>
-                        <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
-                          チャンネル
-                          <select
-                            value={filters.channelId}
-                            onChange={(event) => setFilters((current) => ({ ...current, channelId: event.target.value }))}
-                            style={{ padding: "5px 8px" }}
-                          >
-                            <option value="all">すべて</option>
-                            {masters.channels.map((channel) => (
-                              <option key={channel.id} value={channel.id}>
-                                {channel.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
+                    ) : null}
+                  </div>
 
-                        <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
-                          担当
-                          <select
-                            value={filters.assigneeId}
-                            onChange={(event) => setFilters((current) => ({ ...current, assigneeId: event.target.value }))}
-                            style={{ padding: "5px 8px" }}
-                          >
-                            <option value="all">すべて</option>
-                            {masters.assignees.map((assignee) => (
-                              <option key={assignee.id} value={assignee.id}>
-                                {assignee.display_name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
+                  {activeFilterFields.map((field) => {
+                    const selectedIds = getFilterValues(field);
+                    const options = filterOptionsByField[field];
 
-                        <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
-                          ステータス
-                          <select
-                            value={filters.statusId}
-                            onChange={(event) => setFilters((current) => ({ ...current, statusId: event.target.value }))}
-                            style={{ padding: "5px 8px" }}
-                          >
-                            <option value="all">すべて</option>
-                            {masters.taskStatuses.map((status) => (
-                              <option key={status.id} value={status.id}>
-                                {status.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
+                    return (
+                      <div key={`active-filter-${field}`} style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <button
+                          type="button"
+                          className={activeFilterFieldEditor === field || selectedIds.length ? "primary" : undefined}
+                          onClick={() => {
+                            setFilterAttributePickerOpen(false);
+                            setActiveFilterFieldEditor((current) => (current === field ? null : field));
+                          }}
+                          style={{ padding: "4px 10px", borderRadius: 999, fontSize: 12 }}
+                        >
+                          {formatFilterChipLabel(field)}
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`${FILTER_FIELD_LABELS[field]} フィルターを削除`}
+                          onClick={() => removeFilterField(field)}
+                          style={{ padding: "2px 8px", borderRadius: 999, fontSize: 12, lineHeight: 1.2 }}
+                        >
+                          ×
+                        </button>
 
-                        <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
-                          タスク種
-                          <select
-                            value={filters.taskTypeId}
-                            onChange={(event) => setFilters((current) => ({ ...current, taskTypeId: event.target.value }))}
-                            style={{ padding: "5px 8px" }}
+                        {activeFilterFieldEditor === field ? (
+                          <div
+                            className="card"
+                            style={{
+                              position: "absolute",
+                              top: "calc(100% + 8px)",
+                              left: 0,
+                              zIndex: 42,
+                              width: "min(340px, calc(100vw - 56px))",
+                              padding: 9,
+                              display: "grid",
+                              gap: 8,
+                              background: "#f5f8ff",
+                              borderColor: "#cdd7ee",
+                              alignContent: "start",
+                              boxShadow: "0 14px 28px rgba(22, 27, 42, 0.18)"
+                            }}
                           >
-                            <option value="all">すべて</option>
-                            {masters.taskTypes.map((taskType) => (
-                              <option key={taskType.id} value={taskType.id}>
-                                {taskType.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                              <strong style={{ fontSize: 12 }}>{FILTER_FIELD_LABELS[field]}を選択</strong>
+                              <button type="button" onClick={() => updateFilterValues(field, [])} style={{ padding: "3px 8px", fontSize: 12 }}>
+                                クリア
+                              </button>
+                            </div>
+                            <div style={{ display: "grid", gap: 4, maxHeight: 228, overflowY: "auto", paddingRight: 2 }}>
+                              {options.length ? (
+                                options.map((option) => {
+                                  const checked = selectedIds.includes(option.id);
+                                  return (
+                                    <label
+                                      key={`filter-value-${field}-${option.id}`}
+                                      style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 8,
+                                        padding: "6px 8px",
+                                        borderRadius: 8,
+                                        background: checked ? "#eaf1ff" : "transparent",
+                                        border: checked ? "1px solid #b9cdf7" : "1px solid transparent"
+                                      }}
+                                    >
+                                      <input type="checkbox" checked={checked} onChange={() => toggleFilterValue(field, option.id)} />
+                                      <span style={{ fontSize: 13 }}>{option.label}</span>
+                                    </label>
+                                  );
+                                })
+                              ) : (
+                                <span className="muted" style={{ fontSize: 12 }}>
+                                  選択肢がありません
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
-                    </div>
+                    );
+                  })}
+
+                  {!activeFilterFields.length ? (
+                    <span className="muted" style={{ fontSize: 12 }}>
+                      フィルターなし
+                    </span>
                   ) : null}
                 </div>
-              ) : null}
+              </div>
             </div>
           </div>
         ) : (
@@ -2828,8 +3021,8 @@ export function ScheduleDashboard({
                         const draftChannelId =
                           groupBy === "channel"
                             ? group.id
-                            : filters.channelId !== "all"
-                              ? filters.channelId
+                            : filters.channelIds.length
+                              ? filters.channelIds[0]
                               : (masters.channels[0]?.id ?? "");
                         if (!draftChannelId) return;
                         const lane = event.currentTarget;
@@ -2862,9 +3055,7 @@ export function ScheduleDashboard({
                             ? group.id === UNASSIGNED_ASSIGNEE_GROUP_ID
                               ? ""
                               : group.id
-                            : filters.assigneeId === "all"
-                              ? ""
-                              : filters.assigneeId;
+                            : filters.assigneeIds[0] ?? "";
                         const channelId = laneInteraction.channelId;
                         if (!channelId) {
                           setLaneInteraction(null);
