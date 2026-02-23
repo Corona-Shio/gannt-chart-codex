@@ -2137,6 +2137,7 @@ export function ScheduleDashboard({
                     display: "grid",
                     gridTemplateColumns: LEFT_GRID_TEMPLATE,
                     alignItems: "center",
+                    textAlign: "center",
                     fontSize: 10,
                     fontWeight: 700,
                     padding: "0 10px",
@@ -2470,6 +2471,7 @@ export function ScheduleDashboard({
                             display: "grid",
                             gridTemplateColumns: LEFT_GRID_TEMPLATE,
                             alignItems: "center",
+                            textAlign: "center",
                             padding: "0 10px",
                             gap: TABLE_GAP,
                             borderRight: "1px solid var(--line)",
@@ -2486,7 +2488,15 @@ export function ScheduleDashboard({
                           <span>{task.assignee_name ?? "未割当"}</span>
                           <span>{task.script_no}</span>
                           <span>{task.task_type_name}</span>
-                          <span title={task.task_name} style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          <span
+                            title={task.task_name}
+                            style={{
+                              textAlign: "left",
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis"
+                            }}
+                          >
                             {task.task_name}
                           </span>
                           <span>{toMonthDayLabel(range.startDate)}</span>
