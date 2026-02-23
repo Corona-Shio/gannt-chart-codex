@@ -826,8 +826,11 @@ export function ScheduleDashboard({
   const totalTimelineWidth = timelineDates.length * DAY_WIDTH;
 
   return (
-    <main className="app-shell" style={{ display: "grid", gap: 14 }}>
-      <section className="card" style={{ padding: 16, display: "grid", gap: 12 }}>
+    <main
+      className="app-shell"
+      style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", alignContent: "start", gap: 14 }}
+    >
+      <section className="card" style={{ padding: 16, display: "grid", gap: 12, minWidth: 0 }}>
         <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
           <div>
             <h1 className="headline" style={{ margin: 0 }}>
@@ -973,7 +976,7 @@ export function ScheduleDashboard({
       </section>
 
       {viewTab === "schedule" ? (
-      <section className="card" style={{ overflow: "hidden" }}>
+      <section className="card" style={{ overflow: "hidden", minWidth: 0 }}>
         <div
           style={{
             overflow: "auto",
@@ -1591,7 +1594,7 @@ export function ScheduleDashboard({
       ) : null}
 
       {viewTab === "masters" ? (
-        <section className="card" style={{ padding: 16, display: "grid", gap: 12 }}>
+        <section className="card" style={{ padding: 16, display: "grid", gap: 12, minWidth: 0 }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
             <h2 style={{ margin: 0, fontSize: 18 }}>マスター管理</h2>
             <div className="muted" style={{ fontSize: 13 }}>
