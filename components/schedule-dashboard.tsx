@@ -2030,7 +2030,10 @@ export function ScheduleDashboard({
                     style={{
                       display: "grid",
                       gridTemplateColumns: `${LEFT_WIDTH}px ${totalTimelineWidth}px`,
-                      background: groupHeaderBg
+                      background: groupHeaderBg,
+                      position: "sticky",
+                      top: timelineHeaderHeight,
+                      zIndex: 8
                     }}
                   >
                     <div
