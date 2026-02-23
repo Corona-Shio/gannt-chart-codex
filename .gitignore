@@ -6,6 +6,10 @@ coverage
 supabase/.temp
 
 .agent/
-.agents/
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/commit-worklog/
+!.agents/skills/commit-worklog/SKILL.md
 skills-lock.json
 *.tsbuildinfo
