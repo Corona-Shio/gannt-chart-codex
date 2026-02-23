@@ -22,8 +22,8 @@ const resourceMap = {
   },
   assignees: {
     table: "assignees",
-    select: "id, workspace_id, display_name, is_active",
-    orderBy: "display_name"
+    select: "id, workspace_id, display_name, sort_order, is_active",
+    orderBy: "sort_order"
   }
 } as const;
 
@@ -121,9 +121,10 @@ export async function POST(request: Request, context: { params: Promise<{ resour
       .insert({
         workspace_id: payload.workspaceId,
         display_name: payload.name,
+        sort_order: payload.sortOrder ?? 999,
         is_active: payload.isActive ?? true
       })
-      .select("id, workspace_id, display_name, is_active")
+      .select("id, workspace_id, display_name, sort_order, is_active")
       .single();
 
     if (error || !data) {
@@ -198,6 +199,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ resou
   if (target === "assignees") {
     const patch: Record<string, unknown> = {};
     if (payload.name !== undefined) patch.display_name = payload.name;
+    if (payload.sortOrder !== undefined) patch.sort_order = payload.sortOrder;
     if (payload.isActive !== undefined) patch.is_active = payload.isActive;
 
     const { data, error } = await auth.supabase
@@ -205,7 +207,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ resou
       .update(patch)
       .eq("id", payload.id)
       .eq("workspace_id", payload.workspaceId)
-      .select("id, workspace_id, display_name, is_active")
+      .select("id, workspace_id, display_name, sort_order, is_active")
       .single();
 
     if (error || !data) {

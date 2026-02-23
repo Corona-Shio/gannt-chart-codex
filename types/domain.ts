@@ -53,6 +53,7 @@ export interface Assignee {
   id: string;
   workspace_id: string;
   display_name: string;
+  sort_order: number;
   is_active: boolean;
 }
 

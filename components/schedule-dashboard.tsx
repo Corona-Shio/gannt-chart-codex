@@ -585,13 +585,15 @@ export function ScheduleDashboard({
   };
 
   const reorderMasters = useCallback(
-    async (resource: Exclude<MasterResource, "assignees">, orderedIds: string[]) => {
+    async (resource: MasterResource, orderedIds: string[]) => {
       const currentRows =
         resource === "channels"
           ? masters.channels.map((row) => ({ id: row.id, sortOrder: row.sort_order }))
           : resource === "task_types"
             ? masters.taskTypes.map((row) => ({ id: row.id, sortOrder: row.sort_order }))
-            : masters.taskStatuses.map((row) => ({ id: row.id, sortOrder: row.sort_order }));
+            : resource === "task_statuses"
+              ? masters.taskStatuses.map((row) => ({ id: row.id, sortOrder: row.sort_order }))
+              : masters.assignees.map((row) => ({ id: row.id, sortOrder: row.sort_order }));
 
       const patches = buildSortOrderPatches(currentRows, orderedIds);
       if (!patches.length) return;
@@ -610,7 +612,7 @@ export function ScheduleDashboard({
         throw masterError;
       }
     },
-    [loadMasters, masters.channels, masters.taskStatuses, masters.taskTypes, patchMasterRequest]
+    [loadMasters, masters.assignees, masters.channels, masters.taskStatuses, masters.taskTypes, patchMasterRequest]
   );
 
   const deleteMaster = async (resource: MasterResource, id: string) => {
@@ -1730,16 +1732,25 @@ export function ScheduleDashboard({
               title="担当者"
               canEdit={canAdmin}
               toggleLabel="有効"
+              enableSortOrder
               createToggleDefault
               rows={masters.assignees.map((assignee) => ({
                 id: assignee.id,
                 name: assignee.display_name,
+                sortOrder: assignee.sort_order,
                 toggle: assignee.is_active
               }))}
-              onCreate={async ({ name, toggle }) => createMaster("assignees", name, { isActive: toggle })}
+              onCreate={async ({ name, toggle }) =>
+                createMaster("assignees", name, {
+                  sortOrder: getNextSortOrder(masters.assignees.map((assignee) => assignee.sort_order)),
+                  isActive: toggle
+                })
+              }
+              onReorder={async (orderedIds) => reorderMasters("assignees", orderedIds)}
               onSave={async (id, patch) =>
                 patchMaster("assignees", id, {
                   name: patch.name,
+                  sortOrder: patch.sortOrder,
                   isActive: patch.toggle
                 })
               }
@@ -2409,7 +2420,11 @@ function MasterTableEditor({
           <thead>
             <tr style={{ background: "var(--panel-muted)" }}>
               {reorderEnabled ? (
-                <th style={{ textAlign: "center", width: 52, padding: "8px 10px", border: "1px solid var(--line)" }}>並替</th>
+                <th
+                  style={{ textAlign: "center", width: 88, padding: "8px 10px", border: "1px solid var(--line)", whiteSpace: "nowrap" }}
+                >
+                  並び替え
+                </th>
               ) : null}
               <th style={{ textAlign: "left", padding: "8px 10px", border: "1px solid var(--line)" }}>名称</th>
               <th style={{ textAlign: "left", padding: "8px 10px", border: "1px solid var(--line)" }}>{toggleLabel}</th>
