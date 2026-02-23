@@ -2428,9 +2428,9 @@ function MasterTableEditor({
               const showDropAfter =
                 dragState && dragState.rowId !== row.id && dragState.overId === row.id && dragState.position === "after";
               const dropBorderStyle = showDropBefore
-                ? { borderTop: "2px solid #1948b1" }
+                ? { boxShadow: "inset 0 2px 0 #1948b1" }
                 : showDropAfter
-                  ? { borderBottom: "2px solid #1948b1" }
+                  ? { boxShadow: "inset 0 -2px 0 #1948b1" }
                   : undefined;
 
               return (
