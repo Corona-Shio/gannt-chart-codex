@@ -31,7 +31,7 @@ const DAY_WIDTH = 26;
 const TASK_ROW_HEIGHT = DAY_WIDTH;
 const CREATE_ROW_HEIGHT = DAY_WIDTH;
 const BAR_HEIGHT = Math.max(16, DAY_WIDTH - 8);
-const RELEASE_BAND_ROW_HEIGHT = 14;
+const RELEASE_BAND_ROW_HEIGHT = DAY_WIDTH;
 const MONTH_ROW_HEIGHT = DAY_WIDTH;
 const DAY_ROW_HEIGHT = DAY_WIDTH;
 const WEEKDAY_ROW_HEIGHT = DAY_WIDTH;
@@ -1008,15 +1008,14 @@ export function ScheduleDashboard({
                       style={{
                         height: row.height,
                         display: "flex",
-                        alignItems: "flex-start",
+                        alignItems: "center",
                         padding: "0 10px",
                         fontSize: 10,
                         fontWeight: 700,
                         background: row.tone,
                         borderTop: rowIndex === 0 ? "none" : "1px solid rgba(125, 118, 102, 0.35)",
                         color: row.placeholder ? "var(--text-muted)" : "#2d2a23",
-                        lineHeight: "14px",
-                        paddingTop: 1
+                        lineHeight: "14px"
                       }}
                     >
                       {row.label}
@@ -1085,10 +1084,10 @@ export function ScheduleDashboard({
                               height: row.height,
                               display: "flex",
                               flexDirection: "column",
-                              justifyContent: "flex-start",
+                              justifyContent: "center",
                               alignItems: "center",
                               gap: 0,
-                              padding: "1px 1px 0"
+                              padding: "0 1px"
                             }}
                           >
                             {releases.map((release) => (
