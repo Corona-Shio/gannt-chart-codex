@@ -2023,9 +2023,10 @@ export function ScheduleDashboard({
               const groupHeaderBg = isChannelGroup
                 ? (releaseToneByChannel.get(group.id) ?? GROUP_HEADER_ACCENT_BG)
                 : GROUP_HEADER_ACCENT_BG;
+              const groupHeaderBorder = `1px solid ${TIMELINE_GRID_BORDER}`;
 
               return (
-                <div key={group.id} style={{ borderBottom: "1px solid var(--line)" }}>
+                <div key={group.id} style={{ borderBottom: groupHeaderBorder }}>
                   <div
                     style={{
                       display: "grid",
@@ -2033,7 +2034,8 @@ export function ScheduleDashboard({
                       background: groupHeaderBg,
                       position: "sticky",
                       top: timelineHeaderHeight,
-                      zIndex: 8
+                      zIndex: 8,
+                      borderBottom: groupHeaderBorder
                     }}
                   >
                     <div
@@ -2106,7 +2108,7 @@ export function ScheduleDashboard({
                     </div>
                   </div>
 
-                  {group.items.map((task) => {
+                  {group.items.map((task, taskIndex) => {
                     const range = barRange(task);
                     const releaseDateSetByScriptId = task.script_id
                       ? releaseDatesByChannelScript.byScriptId.get(`${task.channel_id}:${task.script_id}`)
@@ -2116,6 +2118,7 @@ export function ScheduleDashboard({
                       ? releaseDatesByChannelScript.byScriptNo.get(`${task.channel_id}:${normalizedTaskScriptNo}`)
                       : undefined;
                     const matchedReleaseDateSet = releaseDateSetByScriptId ?? releaseDateSetByScriptNo ?? EMPTY_RELEASE_DATE_SET;
+                    const rowTopBorder = taskIndex === 0 ? "none" : `1px solid ${TIMELINE_GRID_BORDER}`;
 
                     return (
                       <div
@@ -2134,7 +2137,7 @@ export function ScheduleDashboard({
                             padding: "0 10px",
                             gap: TABLE_GAP,
                             borderRight: "1px solid var(--line)",
-                            borderTop: `1px solid ${TIMELINE_GRID_BORDER}`,
+                            borderTop: rowTopBorder,
                             position: "sticky",
                             left: 0,
                             background: "#fff",
@@ -2208,7 +2211,7 @@ export function ScheduleDashboard({
                                   bottom: 0,
                                   width: DAY_WIDTH,
                                   borderLeft: `1px solid ${TIMELINE_GRID_BORDER}`,
-                                  borderTop: `1px solid ${TIMELINE_GRID_BORDER}`,
+                                  borderTop: rowTopBorder,
                                   background: matchedReleaseDateSet.has(dayCell.date)
                                     ? RELEASE_MATCH_DAY_BG
                                     : dayCell.isToday
@@ -2343,9 +2346,11 @@ export function ScheduleDashboard({
                     className="muted"
                     style={{
                       fontSize: 11,
-                      padding: "4px 10px",
+                      padding: "0 10px",
+                      display: "flex",
+                      alignItems: "center",
                         borderRight: "1px solid var(--line)",
-                        borderTop: `1px solid ${TIMELINE_GRID_BORDER}`,
+                        borderTop: group.items.length === 0 ? "none" : `1px solid ${TIMELINE_GRID_BORDER}`,
                         position: "sticky",
                         left: 0,
                         background: "#fdfcf8",
@@ -2423,7 +2428,7 @@ export function ScheduleDashboard({
                               top: 0,
                               bottom: 0,
                               borderLeft: `1px solid ${TIMELINE_GRID_BORDER}`,
-                              borderTop: `1px solid ${TIMELINE_GRID_BORDER}`,
+                              borderTop: group.items.length === 0 ? "none" : `1px solid ${TIMELINE_GRID_BORDER}`,
                               background: dayCell.isToday
                                 ? TODAY_COLUMN_BG
                                 : dayCell.isNonWorkingDay
