@@ -45,6 +45,7 @@ const LEFT_WIDTH =
   TABLE_COLUMN_WIDTHS.reduce((sum, width) => sum + width, 0) + TABLE_GAP * (TABLE_COLUMN_WIDTHS.length - 1) + TABLE_SIDE_PADDING;
 const WEEKDAY_JA = ["日", "月", "火", "水", "木", "金", "土"] as const;
 const RELEASE_ROW_TONES = ["#dfe8f7", "#f0e4d1", "#efe9d7", "#f3e8d7", "#e3ebdd", "#ebe2f2"] as const;
+const GROUP_HEADER_ACCENT_BG = "#e4ecf9";
 const NON_WORKING_DAY_BG = "#ececec";
 const TODAY_COLUMN_BG = "#fff1a8";
 const RELEASE_MATCH_DAY_BG = "#ef6a5a";
@@ -1308,15 +1309,21 @@ export function ScheduleDashboard({
     });
   }, [releaseDates, filters.channelId]);
 
-  const releaseByChannel = useMemo(() => {
-    const map = new Map<string, ReleaseDateRow[]>();
+  const releaseMaxStackByChannel = useMemo(() => {
+    const perChannelDateCount = new Map<string, Map<string, number>>();
     for (const releaseDate of visibleReleaseDates) {
-      if (!map.has(releaseDate.channel_id)) {
-        map.set(releaseDate.channel_id, []);
-      }
-      map.get(releaseDate.channel_id)?.push(releaseDate);
+      const perDateCount = perChannelDateCount.get(releaseDate.channel_id) ?? new Map<string, number>();
+      const nextCount = (perDateCount.get(releaseDate.release_date) ?? 0) + 1;
+      perDateCount.set(releaseDate.release_date, nextCount);
+      perChannelDateCount.set(releaseDate.channel_id, perDateCount);
     }
-    return map;
+
+    const maxStackByChannel = new Map<string, number>();
+    for (const [channelId, perDateCount] of perChannelDateCount) {
+      maxStackByChannel.set(channelId, Math.max(1, ...perDateCount.values()));
+    }
+
+    return maxStackByChannel;
   }, [visibleReleaseDates]);
 
   const timelineDayCells = useMemo<TimelineDayCell[]>(
@@ -1403,6 +1410,15 @@ export function ScheduleDashboard({
     }
     return map;
   }, [visibleReleaseDates]);
+
+  const releaseToneByChannel = useMemo(() => {
+    const toneMap = new Map<string, string>();
+    for (const row of releaseBandRows) {
+      if (row.placeholder) continue;
+      toneMap.set(row.channelId, row.tone);
+    }
+    return toneMap;
+  }, [releaseBandRows]);
 
   const releaseDatesByChannelScript = useMemo(() => {
     const byScriptId = new Map<string, Set<string>>();
@@ -2000,7 +2016,13 @@ export function ScheduleDashboard({
             ) : null}
 
             {grouped.map((group) => {
-              const releases = groupBy === "channel" ? (releaseByChannel.get(group.id) ?? []) : [];
+              const isChannelGroup = groupBy === "channel";
+              const groupHeaderHeight = isChannelGroup
+                ? RELEASE_BAND_ROW_HEIGHT * (releaseMaxStackByChannel.get(group.id) ?? 1)
+                : RELEASE_BAND_ROW_HEIGHT;
+              const groupHeaderBg = isChannelGroup
+                ? (releaseToneByChannel.get(group.id) ?? GROUP_HEADER_ACCENT_BG)
+                : GROUP_HEADER_ACCENT_BG;
 
               return (
                 <div key={group.id} style={{ borderBottom: "1px solid var(--line)" }}>
@@ -2008,16 +2030,19 @@ export function ScheduleDashboard({
                     style={{
                       display: "grid",
                       gridTemplateColumns: `${LEFT_WIDTH}px ${totalTimelineWidth}px`,
-                      background: "#f9f7f1"
+                      background: groupHeaderBg
                     }}
                   >
                     <div
                       style={{
                         padding: "8px 10px",
                         borderRight: "1px solid var(--line)",
+                        height: groupHeaderHeight,
+                        display: "flex",
+                        alignItems: "center",
                         position: "sticky",
                         left: 0,
-                        background: "#f9f7f1",
+                        background: groupHeaderBg,
                         zIndex: 6
                       }}
                     >
@@ -2026,12 +2051,55 @@ export function ScheduleDashboard({
                         {group.items.length} tasks
                       </span>
                     </div>
-                    <div style={{ padding: "8px 10px" }} className="muted">
-                      {groupBy === "channel"
-                        ? releases.length
-                          ? `${releases.length}件の公開日マーカー`
-                          : "公開日マーカーなし"
-                        : "公開日マーカーはチャンネル単位"}
+                    <div
+                      style={{
+                        display: "flex",
+                        width: totalTimelineWidth,
+                        height: groupHeaderHeight,
+                        background: groupHeaderBg
+                      }}
+                    >
+                      {timelineDayCells.map((dayCell) => {
+                        const releases = isChannelGroup ? (releaseBandCellMap.get(`${group.id}:${dayCell.date}`) ?? []) : [];
+                        const title = releases
+                          .map((release) =>
+                            `${release.script_no}${release.label ? ` (${release.label})` : ""} ${release.release_date}`
+                          )
+                          .join(", ");
+
+                        return (
+                          <div
+                            key={`group-header-${group.id}-${dayCell.date}`}
+                            title={title || undefined}
+                            style={{
+                              width: DAY_WIDTH,
+                              borderLeft: "1px solid rgba(122, 116, 101, 0.35)",
+                              height: groupHeaderHeight,
+                              display: "flex",
+                              flexDirection: "column",
+                              justifyContent: "center",
+                              alignItems: "center",
+                              padding: "0 1px",
+                              background: dayCell.isToday ? TODAY_COLUMN_BG : "transparent"
+                            }}
+                          >
+                            {releases.map((release) => (
+                              <span
+                                key={release.id}
+                                style={{
+                                  whiteSpace: "nowrap",
+                                  fontSize: 8,
+                                  lineHeight: "11px",
+                                  color: "#2d3c62",
+                                  fontWeight: 700
+                                }}
+                              >
+                                {release.script_no}
+                              </span>
+                            ))}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
 
