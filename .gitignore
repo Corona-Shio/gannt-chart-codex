@@ -4,3 +4,8 @@ node_modules
 coverage
 .DS_Store
 supabase/.temp
+
+.agent/
+.agents/
+skills-lock.json
+*.tsbuildinfo
