@@ -47,6 +47,7 @@ const RELEASE_ROW_TONES = ["#dfe8f7", "#f0e4d1", "#efe9d7", "#f3e8d7", "#e3ebdd"
 const GROUP_HEADER_ACCENT_BG = "#e4ecf9";
 const NON_WORKING_DAY_BG = "#ececec";
 const TODAY_COLUMN_BG = "#fff1a8";
+const TODAY_MARKER_COLOR = "#e56458";
 const RELEASE_MATCH_DAY_BG = "#ef6a5a";
 const TIMELINE_GRID_BORDER = "#b8b8b8";
 const TOP_PANEL_MIN_HEIGHT = 154;
@@ -1532,6 +1533,15 @@ export function ScheduleDashboard({
     }
     return groups;
   }, [timelineDayCells]);
+  const todayBoundaryMarkers = useMemo(() => {
+    const todayIndex = timelineDayCells.findIndex((dayCell) => dayCell.isToday);
+    if (todayIndex < 0) return null;
+    const boundaryLeft = (todayIndex + 1) * DAY_WIDTH;
+    return {
+      todayRightLeft: boundaryLeft - 0.5,
+      tomorrowLeft: todayIndex + 1 < timelineDayCells.length ? boundaryLeft : null
+    };
+  }, [timelineDayCells]);
 
   const releaseBandRows = useMemo<ChannelReleaseBandRow[]>(() => {
     const sortedChannels = [...masters.channels].sort((a, b) => a.sort_order - b.sort_order);
@@ -2423,7 +2433,8 @@ export function ScheduleDashboard({
                         display: "flex",
                         width: totalTimelineWidth,
                         height: groupHeaderHeight,
-                        background: groupHeaderBg
+                        background: groupHeaderBg,
+                        position: "relative"
                       }}
                     >
                       {timelineDayCells.map((dayCell) => {
@@ -2467,6 +2478,38 @@ export function ScheduleDashboard({
                           </div>
                         );
                       })}
+                      {todayBoundaryMarkers ? (
+                        <>
+                          <div
+                            aria-hidden
+                            style={{
+                              position: "absolute",
+                              top: 0,
+                              bottom: 0,
+                              left: todayBoundaryMarkers.todayRightLeft,
+                              width: 0.5,
+                              background: TODAY_MARKER_COLOR,
+                              pointerEvents: "none",
+                              zIndex: 3
+                            }}
+                          />
+                          {todayBoundaryMarkers.tomorrowLeft !== null ? (
+                            <div
+                              aria-hidden
+                              style={{
+                                position: "absolute",
+                                top: 0,
+                                bottom: 0,
+                                left: todayBoundaryMarkers.tomorrowLeft,
+                                width: 0.5,
+                                background: TODAY_MARKER_COLOR,
+                                pointerEvents: "none",
+                                zIndex: 3
+                              }}
+                            />
+                          ) : null}
+                        </>
+                      ) : null}
                     </div>
                   </div>
 
@@ -2585,9 +2628,7 @@ export function ScheduleDashboard({
                                   borderTop: rowTopBorder,
                                   background: matchedReleaseDateSet.has(dayCell.date)
                                     ? RELEASE_MATCH_DAY_BG
-                                    : dayCell.isToday
-                                      ? TODAY_COLUMN_BG
-                                      : dayCell.isNonWorkingDay
+                                    : dayCell.isNonWorkingDay
                                         ? NON_WORKING_DAY_BG
                                         : "transparent"
                                 }}
@@ -2627,6 +2668,7 @@ export function ScheduleDashboard({
                                   left: range.startIndex * DAY_WIDTH + 2,
                                   width: Math.max(DAY_WIDTH - 4, (range.endIndex - range.startIndex + 1) * DAY_WIDTH - 4),
                                   height: BAR_HEIGHT,
+                                  zIndex: 2,
                                   borderRadius: 5,
                                   background: "linear-gradient(120deg, #4b8aff, #2b66d7)",
                                   color: "#fff",
@@ -2700,6 +2742,38 @@ export function ScheduleDashboard({
                                   }}
                                 />
                               </div>
+                            ) : null}
+                            {todayBoundaryMarkers ? (
+                              <>
+                                <div
+                                  aria-hidden
+                                  style={{
+                                    position: "absolute",
+                                    top: 0,
+                                    bottom: 0,
+                                    left: todayBoundaryMarkers.todayRightLeft,
+                                    width: 0.5,
+                                    background: TODAY_MARKER_COLOR,
+                                    pointerEvents: "none",
+                                    zIndex: 1
+                                  }}
+                                />
+                                {todayBoundaryMarkers.tomorrowLeft !== null ? (
+                                  <div
+                                    aria-hidden
+                                    style={{
+                                      position: "absolute",
+                                      top: 0,
+                                      bottom: 0,
+                                      left: todayBoundaryMarkers.tomorrowLeft,
+                                      width: 0.5,
+                                      background: TODAY_MARKER_COLOR,
+                                      pointerEvents: "none",
+                                      zIndex: 1
+                                    }}
+                                  />
+                                ) : null}
+                              </>
                             ) : null}
                           </div>
                         </div>
@@ -2802,9 +2876,7 @@ export function ScheduleDashboard({
                               bottom: 0,
                               borderLeft: `1px solid ${TIMELINE_GRID_BORDER}`,
                               borderTop: group.items.length === 0 ? "none" : `1px solid ${TIMELINE_GRID_BORDER}`,
-                              background: dayCell.isToday
-                                ? TODAY_COLUMN_BG
-                                : dayCell.isNonWorkingDay
+                              background: dayCell.isNonWorkingDay
                                   ? NON_WORKING_DAY_BG
                                   : "transparent"
                             }}
@@ -2829,6 +2901,38 @@ export function ScheduleDashboard({
                               border: "1px solid rgba(36, 89, 204, 0.6)"
                             }}
                           />
+                        ) : null}
+                        {todayBoundaryMarkers ? (
+                          <>
+                            <div
+                              aria-hidden
+                              style={{
+                                position: "absolute",
+                                top: 0,
+                                bottom: 0,
+                                left: todayBoundaryMarkers.todayRightLeft,
+                                width: 0.5,
+                                background: TODAY_MARKER_COLOR,
+                                pointerEvents: "none",
+                                zIndex: 3
+                              }}
+                            />
+                            {todayBoundaryMarkers.tomorrowLeft !== null ? (
+                              <div
+                                aria-hidden
+                                style={{
+                                  position: "absolute",
+                                  top: 0,
+                                  bottom: 0,
+                                  left: todayBoundaryMarkers.tomorrowLeft,
+                                  width: 0.5,
+                                  background: TODAY_MARKER_COLOR,
+                                  pointerEvents: "none",
+                                  zIndex: 3
+                                }}
+                              />
+                            ) : null}
+                          </>
                         ) : null}
                       </div>
                     </div>
