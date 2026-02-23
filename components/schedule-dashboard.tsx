@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchJson } from "@/lib/http";
 import { dateRange } from "@/lib/date";
+import { buildSortOrderPatches, getNextSortOrder, moveItemByDrop, type DropPosition } from "@/lib/master-order";
 import { createClientSupabase } from "@/lib/supabase/client";
 import type {
   Assignee,
@@ -559,22 +560,58 @@ export function ScheduleDashboard({
     await loadMembers();
   };
 
+  const patchMasterRequest = useCallback(
+    async (resource: MasterResource, id: string, patch: Record<string, unknown>) => {
+      await fetchJson(`/api/masters/${resource}`, {
+        method: "PATCH",
+        body: JSON.stringify({ workspaceId, id, ...patch })
+      });
+    },
+    [workspaceId]
+  );
+
   const patchMaster = async (
     resource: MasterResource,
     id: string,
     patch: Record<string, unknown>
   ) => {
     try {
-      await fetchJson(`/api/masters/${resource}`, {
-        method: "PATCH",
-        body: JSON.stringify({ workspaceId, id, ...patch })
-      });
+      await patchMasterRequest(resource, id, patch);
       await loadMasters();
     } catch (masterError) {
       setError(masterError instanceof Error ? masterError.message : "マスター更新に失敗しました");
       throw masterError;
     }
   };
+
+  const reorderMasters = useCallback(
+    async (resource: Exclude<MasterResource, "assignees">, orderedIds: string[]) => {
+      const currentRows =
+        resource === "channels"
+          ? masters.channels.map((row) => ({ id: row.id, sortOrder: row.sort_order }))
+          : resource === "task_types"
+            ? masters.taskTypes.map((row) => ({ id: row.id, sortOrder: row.sort_order }))
+            : masters.taskStatuses.map((row) => ({ id: row.id, sortOrder: row.sort_order }));
+
+      const patches = buildSortOrderPatches(currentRows, orderedIds);
+      if (!patches.length) return;
+
+      try {
+        await Promise.all(
+          patches.map((patch) =>
+            patchMasterRequest(resource, patch.id, {
+              sortOrder: patch.sortOrder
+            })
+          )
+        );
+        await loadMasters();
+      } catch (masterError) {
+        setError(masterError instanceof Error ? masterError.message : "マスター更新に失敗しました");
+        throw masterError;
+      }
+    },
+    [loadMasters, masters.channels, masters.taskStatuses, masters.taskTypes, patchMasterRequest]
+  );
 
   const deleteMaster = async (resource: MasterResource, id: string) => {
     try {
@@ -1639,9 +1676,13 @@ export function ScheduleDashboard({
                 sortOrder: channel.sort_order,
                 toggle: channel.is_active
               }))}
-              onCreate={async ({ name, sortOrder, toggle }) =>
-                createMaster("channels", name, { sortOrder, isActive: toggle })
+              onCreate={async ({ name, toggle }) =>
+                createMaster("channels", name, {
+                  sortOrder: getNextSortOrder(masters.channels.map((channel) => channel.sort_order)),
+                  isActive: toggle
+                })
               }
+              onReorder={async (orderedIds) => reorderMasters("channels", orderedIds)}
               onSave={async (id, patch) =>
                 patchMaster("channels", id, {
                   name: patch.name,
@@ -1666,9 +1707,13 @@ export function ScheduleDashboard({
                 sortOrder: taskType.sort_order,
                 toggle: taskType.is_active
               }))}
-              onCreate={async ({ name, sortOrder, toggle }) =>
-                createMaster("task_types", name, { sortOrder, isActive: toggle })
+              onCreate={async ({ name, toggle }) =>
+                createMaster("task_types", name, {
+                  sortOrder: getNextSortOrder(masters.taskTypes.map((taskType) => taskType.sort_order)),
+                  isActive: toggle
+                })
               }
+              onReorder={async (orderedIds) => reorderMasters("task_types", orderedIds)}
               onSave={async (id, patch) =>
                 patchMaster("task_types", id, {
                   name: patch.name,
@@ -1714,9 +1759,13 @@ export function ScheduleDashboard({
                 sortOrder: status.sort_order,
                 toggle: status.is_done
               }))}
-              onCreate={async ({ name, sortOrder, toggle }) =>
-                createMaster("task_statuses", name, { sortOrder, isDone: toggle })
+              onCreate={async ({ name, toggle }) =>
+                createMaster("task_statuses", name, {
+                  sortOrder: getNextSortOrder(masters.taskStatuses.map((status) => status.sort_order)),
+                  isDone: toggle
+                })
               }
+              onReorder={async (orderedIds) => reorderMasters("task_statuses", orderedIds)}
               onSave={async (id, patch) =>
                 patchMaster("task_statuses", id, {
                   name: patch.name,
@@ -2297,6 +2346,20 @@ type MasterTablePatch = {
   toggle: boolean;
 };
 
+type MasterTableRow = {
+  id: string;
+  name: string;
+  sortOrder?: number;
+  toggle: boolean;
+};
+
+type MasterDragState = {
+  pointerId: number;
+  rowId: string;
+  overId: string;
+  position: DropPosition;
+};
+
 function MasterTableEditor({
   title,
   rows,
@@ -2306,10 +2369,11 @@ function MasterTableEditor({
   createToggleDefault = false,
   onCreate,
   onSave,
-  onDelete
+  onDelete,
+  onReorder
 }: {
   title: string;
-  rows: { id: string; name: string; sortOrder?: number; toggle: boolean }[];
+  rows: MasterTableRow[];
   toggleLabel: string;
   canEdit: boolean;
   enableSortOrder?: boolean;
@@ -2317,19 +2381,25 @@ function MasterTableEditor({
   onCreate: (patch: MasterTablePatch) => Promise<void>;
   onSave: (id: string, patch: MasterTablePatch) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  onReorder?: (orderedIds: string[]) => Promise<void>;
 }) {
   const [createName, setCreateName] = useState("");
-  const [createSortOrder, setCreateSortOrder] = useState("");
   const [createToggle, setCreateToggle] = useState(createToggleDefault);
   const [busy, setBusy] = useState(false);
   const [rowBusyId, setRowBusyId] = useState<string | null>(null);
-  const [drafts, setDrafts] = useState<Record<string, { name?: string; sortOrder?: string; toggle?: boolean }>>({});
+  const [reorderBusy, setReorderBusy] = useState(false);
+  const [orderedRows, setOrderedRows] = useState(rows);
+  const [dragState, setDragState] = useState<MasterDragState | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, { name?: string; toggle?: boolean }>>({});
 
-  const parseSortOrder = (value: string): number | undefined => {
-    if (!value.trim()) return undefined;
-    const parsed = Number.parseInt(value, 10);
-    return Number.isNaN(parsed) ? undefined : parsed;
-  };
+  useEffect(() => {
+    if (dragState || reorderBusy) return;
+    setOrderedRows(rows);
+  }, [dragState, reorderBusy, rows]);
+
+  const reorderEnabled = enableSortOrder && Boolean(onReorder);
+  const reorderLocked = busy || rowBusyId !== null || reorderBusy;
+  const interactionLocked = busy || rowBusyId !== null || reorderBusy || dragState !== null;
 
   return (
     <div style={{ display: "grid", gap: 10 }}>
@@ -2338,28 +2408,127 @@ function MasterTableEditor({
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 780 }}>
           <thead>
             <tr style={{ background: "var(--panel-muted)" }}>
-              <th style={{ textAlign: "left", padding: "8px 10px", border: "1px solid var(--line)" }}>名称</th>
-              {enableSortOrder ? (
-                <th style={{ textAlign: "left", padding: "8px 10px", border: "1px solid var(--line)" }}>並び順</th>
+              {reorderEnabled ? (
+                <th style={{ textAlign: "center", width: 52, padding: "8px 10px", border: "1px solid var(--line)" }}>並替</th>
               ) : null}
+              <th style={{ textAlign: "left", padding: "8px 10px", border: "1px solid var(--line)" }}>名称</th>
               <th style={{ textAlign: "left", padding: "8px 10px", border: "1px solid var(--line)" }}>{toggleLabel}</th>
               <th style={{ textAlign: "left", padding: "8px 10px", border: "1px solid var(--line)" }}>操作</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => {
+            {orderedRows.map((row) => {
               const draft = drafts[row.id];
               const name = draft?.name ?? row.name;
-              const sortOrder = draft?.sortOrder ?? (row.sortOrder !== undefined ? String(row.sortOrder) : "");
               const toggle = draft?.toggle ?? row.toggle;
               const busyRow = rowBusyId === row.id;
+              const isDraggingRow = dragState?.rowId === row.id;
+              const showDropBefore =
+                dragState && dragState.rowId !== row.id && dragState.overId === row.id && dragState.position === "before";
+              const showDropAfter =
+                dragState && dragState.rowId !== row.id && dragState.overId === row.id && dragState.position === "after";
+              const dropBorderStyle = showDropBefore
+                ? { borderTop: "2px solid #1948b1" }
+                : showDropAfter
+                  ? { borderBottom: "2px solid #1948b1" }
+                  : undefined;
 
               return (
-                <tr key={row.id}>
-                  <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>
+                <tr key={row.id} data-row-id={row.id} style={{ opacity: isDraggingRow ? 0.55 : 1 }}>
+                  {reorderEnabled ? (
+                    <td style={{ padding: "8px 10px", border: "1px solid var(--line)", textAlign: "center", ...dropBorderStyle }}>
+                      <button
+                        type="button"
+                        aria-label="並び替え"
+                        disabled={!canEdit || reorderLocked || (dragState !== null && dragState.rowId !== row.id)}
+                        onPointerDown={(event) => {
+                          if (!canEdit || reorderLocked) return;
+                          event.preventDefault();
+                          event.currentTarget.setPointerCapture(event.pointerId);
+                          setDragState({
+                            pointerId: event.pointerId,
+                            rowId: row.id,
+                            overId: row.id,
+                            position: "after"
+                          });
+                        }}
+                        onPointerMove={(event) => {
+                          if (!dragState || dragState.pointerId !== event.pointerId) return;
+                          const element = document.elementFromPoint(event.clientX, event.clientY);
+                          if (!(element instanceof HTMLElement)) return;
+
+                          const targetRow = element.closest("tr[data-row-id]");
+                          if (!(targetRow instanceof HTMLTableRowElement)) return;
+                          if (targetRow.closest("table") !== event.currentTarget.closest("table")) return;
+
+                          const overId = targetRow.dataset.rowId;
+                          if (!overId) return;
+
+                          const rect = targetRow.getBoundingClientRect();
+                          const position: DropPosition = event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+
+                          setDragState((current) => {
+                            if (!current || current.pointerId !== event.pointerId) return current;
+                            if (current.overId === overId && current.position === position) return current;
+                            return { ...current, overId, position };
+                          });
+                        }}
+                        onPointerUp={(event) => {
+                          if (!dragState || dragState.pointerId !== event.pointerId) return;
+                          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                            event.currentTarget.releasePointerCapture(event.pointerId);
+                          }
+
+                          const currentDrag = dragState;
+                          setDragState(null);
+
+                          if (!onReorder) return;
+                          const nextRows = moveItemByDrop(orderedRows, currentDrag.rowId, currentDrag.overId, currentDrag.position);
+                          const changed = nextRows.some((nextRow, index) => nextRow.id !== orderedRows[index]?.id);
+                          if (!changed) return;
+
+                          const previousRows = orderedRows;
+                          setOrderedRows(nextRows);
+                          setReorderBusy(true);
+                          void (async () => {
+                            try {
+                              await onReorder(nextRows.map((nextRow) => nextRow.id));
+                            } catch {
+                              setOrderedRows(previousRows);
+                            } finally {
+                              setReorderBusy(false);
+                            }
+                          })();
+                        }}
+                        onPointerCancel={(event) => {
+                          if (!dragState || dragState.pointerId !== event.pointerId) return;
+                          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                            event.currentTarget.releasePointerCapture(event.pointerId);
+                          }
+                          setDragState(null);
+                        }}
+                        style={{
+                          width: 28,
+                          height: 28,
+                          padding: 0,
+                          borderRadius: 6,
+                          border: "1px solid var(--line)",
+                          cursor: !canEdit || reorderLocked ? "default" : "grab",
+                          touchAction: "none",
+                          userSelect: "none",
+                          lineHeight: "26px",
+                          fontSize: 15
+                        }}
+                      >
+                        ≡
+                      </button>
+                    </td>
+                  ) : null}
+
+                  <td style={{ padding: "8px 10px", border: "1px solid var(--line)", ...dropBorderStyle }}>
                     <input
                       value={name}
-                      disabled={!canEdit || busyRow}
+                      disabled={!canEdit || busyRow || interactionLocked}
                       onChange={(event) =>
                         setDrafts((current) => ({
                           ...current,
@@ -2372,30 +2541,11 @@ function MasterTableEditor({
                     />
                   </td>
 
-                  {enableSortOrder ? (
-                    <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>
-                      <input
-                        type="number"
-                        value={sortOrder}
-                        disabled={!canEdit || busyRow}
-                        onChange={(event) =>
-                          setDrafts((current) => ({
-                            ...current,
-                            [row.id]: {
-                              ...current[row.id],
-                              sortOrder: event.target.value
-                            }
-                          }))
-                        }
-                      />
-                    </td>
-                  ) : null}
-
-                  <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>
+                  <td style={{ padding: "8px 10px", border: "1px solid var(--line)", ...dropBorderStyle }}>
                     <input
                       type="checkbox"
                       checked={toggle}
-                      disabled={!canEdit || busyRow}
+                      disabled={!canEdit || busyRow || interactionLocked}
                       onChange={(event) =>
                         setDrafts((current) => ({
                           ...current,
@@ -2408,11 +2558,11 @@ function MasterTableEditor({
                     />
                   </td>
 
-                  <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>
+                  <td style={{ padding: "8px 10px", border: "1px solid var(--line)", ...dropBorderStyle }}>
                     <div style={{ display: "flex", gap: 8 }}>
                       <button
                         type="button"
-                        disabled={!canEdit || busyRow}
+                        disabled={!canEdit || busyRow || interactionLocked}
                         onClick={async () => {
                           const normalizedName = name.trim();
                           if (!normalizedName) return;
@@ -2421,7 +2571,6 @@ function MasterTableEditor({
                           try {
                             await onSave(row.id, {
                               name: normalizedName,
-                              sortOrder: enableSortOrder ? parseSortOrder(sortOrder) : undefined,
                               toggle
                             });
                             setDrafts((current) => {
@@ -2439,7 +2588,7 @@ function MasterTableEditor({
                       <button
                         type="button"
                         className="danger"
-                        disabled={!canEdit || busyRow}
+                        disabled={!canEdit || busyRow || interactionLocked}
                         onClick={async () => {
                           if (!window.confirm(`${row.name} を削除しますか？`)) return;
 
@@ -2460,29 +2609,20 @@ function MasterTableEditor({
             })}
 
             <tr style={{ background: "#fffdf8" }}>
+              {reorderEnabled ? <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }} /> : null}
               <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>
                 <input
                   value={createName}
                   placeholder={`${title}を追加`}
-                  disabled={!canEdit || busy}
+                  disabled={!canEdit || interactionLocked}
                   onChange={(event) => setCreateName(event.target.value)}
                 />
               </td>
-              {enableSortOrder ? (
-                <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>
-                  <input
-                    type="number"
-                    value={createSortOrder}
-                    disabled={!canEdit || busy}
-                    onChange={(event) => setCreateSortOrder(event.target.value)}
-                  />
-                </td>
-              ) : null}
               <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>
                 <input
                   type="checkbox"
                   checked={createToggle}
-                  disabled={!canEdit || busy}
+                  disabled={!canEdit || interactionLocked}
                   onChange={(event) => setCreateToggle(event.target.checked)}
                 />
               </td>
@@ -2490,7 +2630,7 @@ function MasterTableEditor({
                 <button
                   type="button"
                   className="primary"
-                  disabled={!canEdit || busy || !createName.trim()}
+                  disabled={!canEdit || interactionLocked || !createName.trim()}
                   onClick={async () => {
                     const normalizedName = createName.trim();
                     if (!normalizedName) return;
@@ -2499,11 +2639,9 @@ function MasterTableEditor({
                     try {
                       await onCreate({
                         name: normalizedName,
-                        sortOrder: enableSortOrder ? parseSortOrder(createSortOrder) : undefined,
                         toggle: createToggle
                       });
                       setCreateName("");
-                      setCreateSortOrder("");
                       setCreateToggle(createToggleDefault);
                     } finally {
                       setBusy(false);
