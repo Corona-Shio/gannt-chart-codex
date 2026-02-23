@@ -2447,7 +2447,7 @@ export function ScheduleDashboard({
                               justifyContent: "center",
                               alignItems: "center",
                               padding: "0 1px",
-                              background: dayCell.isToday ? TODAY_COLUMN_BG : "transparent"
+                              background: groupHeaderBg
                             }}
                           >
                             {releases.map((release) => (
