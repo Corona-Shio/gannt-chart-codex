@@ -32,6 +32,33 @@
 
 ## 作業ログ
 
+## 2026-02-23 16:26 JST - マスター管理ビューのセクション高さと余白の安定化
+- 背景:
+  - マスター管理ビューで、下段テーブルの内容量やビュー切替に応じてセクションサイズや余白が伸縮して見え方が不安定だった。
+  - 特にマスター選択タブ周辺が縦方向に引き伸ばされる挙動を解消する必要があった。
+- 修正方針:
+  - 画面全体は `auto + minmax(0, 1fr)` の縦配分を維持し、下段セクションは常に残り高を使う。
+  - マスター管理ビューはヘッダ/タブとテーブル領域を分離し、テーブル領域だけを内部スクロールさせる。
+  - 上段カードには最小高を与えて、スケジュール/マスター切替時の見た目の高さ差を抑える。
+- 実施内容:
+  - `components/schedule-dashboard.tsx` に `TOP_PANEL_MIN_HEIGHT` と `TOP_PANEL_DETAIL_MIN_HEIGHT` を追加。
+  - 上段カードを `minHeight` + `alignContent: "start"` に変更し、`schedule`/`masters` での情報ブロック高さを揃えるよう調整。
+  - マスター管理セクションを `display: flex; flex-direction: column; minHeight: 0;` に変更。
+  - マスター管理内に `overflow: auto` の専用コンテナを設け、テーブル群のみスクロールさせる構造へ変更。
+- 変更ファイル:
+  - `/Users/nakashioyuu/gantt-chart/components/schedule-dashboard.tsx`
+- 検証:
+  - コマンド: `npm run lint`
+  - 結果: エラー/警告なし
+  - コマンド: `npm test`
+  - 結果: 17 tests passed
+- Git:
+  - branch: `main`
+  - commit: 未コミット（このエントリ時点）
+  - push: 未実施
+- 次回メモ:
+  - 実機確認で上段高さをさらに揃えたい場合は `TOP_PANEL_MIN_HEIGHT` / `TOP_PANEL_DETAIL_MIN_HEIGHT` をデザイン基準で微調整する。
+
 ## 2026-02-23 16:20 JST - 作業記録運用の標準化とSkill追加
 - 背景:
   - コミット/プッシュ後に作業内容と修正方針を継続記録できる運用が必要になった。

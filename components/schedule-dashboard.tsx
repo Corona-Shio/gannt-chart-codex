@@ -47,6 +47,8 @@ const RELEASE_ROW_TONES = ["#dfe8f7", "#f0e4d1", "#efe9d7", "#f3e8d7", "#e3ebdd"
 const NON_WORKING_DAY_BG = "#ececec";
 const TODAY_COLUMN_BG = "#fff1a8";
 const TIMELINE_GRID_BORDER = "#b8b8b8";
+const TOP_PANEL_MIN_HEIGHT = 188;
+const TOP_PANEL_DETAIL_MIN_HEIGHT = 88;
 
 type GroupBy = "channel" | "none";
 type MasterResource = "channels" | "task_types" | "assignees" | "task_statuses";
@@ -1432,14 +1434,17 @@ export function ScheduleDashboard({
       style={{
         display: "grid",
         gridTemplateColumns: "minmax(0, 1fr)",
-        gridTemplateRows: viewTab === "schedule" ? "auto minmax(0, 1fr)" : "auto",
+        gridTemplateRows: "auto minmax(0, 1fr)",
         height: "100dvh",
         minHeight: 0,
         alignContent: "stretch",
         gap: 14
       }}
     >
-      <section className="card" style={{ padding: 16, display: "grid", gap: 12, minWidth: 0 }}>
+      <section
+        className="card"
+        style={{ padding: 16, display: "grid", gap: 12, minWidth: 0, minHeight: TOP_PANEL_MIN_HEIGHT, alignContent: "start" }}
+      >
         <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
           <div>
             <h1 className="headline" style={{ margin: 0 }}>
@@ -1480,7 +1485,7 @@ export function ScheduleDashboard({
         </div>
 
         {viewTab === "schedule" ? (
-          <>
+          <div style={{ display: "grid", gap: 8, minHeight: TOP_PANEL_DETAIL_MIN_HEIGHT, alignContent: "start" }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <label>
                 Group
@@ -1584,9 +1589,11 @@ export function ScheduleDashboard({
                 </select>
               </label>
             </div>
-          </>
+          </div>
         ) : (
-          <div className="muted">公開日と各種マスターをテーブル形式でCRUDできます。</div>
+          <div className="muted" style={{ minHeight: TOP_PANEL_DETAIL_MIN_HEIGHT, display: "flex", alignItems: "center" }}>
+            公開日と各種マスターをテーブル形式でCRUDできます。
+          </div>
         )}
 
         {error ? (
@@ -2232,7 +2239,10 @@ export function ScheduleDashboard({
       ) : null}
 
       {viewTab === "masters" ? (
-        <section className="card" style={{ padding: 16, display: "grid", gap: 12, minWidth: 0 }}>
+        <section
+          className="card"
+          style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12, minWidth: 0, minHeight: 0 }}
+        >
           <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
             <h2 style={{ margin: 0, fontSize: 18 }}>マスター管理</h2>
             <div className="muted" style={{ fontSize: 13 }}>
@@ -2265,145 +2275,147 @@ export function ScheduleDashboard({
             </button>
           </div>
 
-          {masterTab === "release_dates" ? (
-            <ReleaseDateTable
-              canEdit={canWrite}
-              channels={masters.channels}
-              releaseDates={releaseDates}
-              releaseForm={releaseForm}
-              onReleaseFormChange={setReleaseForm}
-              onCreate={handleSaveReleaseDate}
-              onSave={handlePatchReleaseDate}
-              onDelete={handleDeleteReleaseDate}
-            />
-          ) : null}
+          <div style={{ flex: 1, minHeight: 0, overflow: "auto", scrollbarGutter: "stable", paddingBottom: 6 }}>
+            {masterTab === "release_dates" ? (
+              <ReleaseDateTable
+                canEdit={canWrite}
+                channels={masters.channels}
+                releaseDates={releaseDates}
+                releaseForm={releaseForm}
+                onReleaseFormChange={setReleaseForm}
+                onCreate={handleSaveReleaseDate}
+                onSave={handlePatchReleaseDate}
+                onDelete={handleDeleteReleaseDate}
+              />
+            ) : null}
 
-          {masterTab === "channels" ? (
-            <MasterTableEditor
-              title="チャンネル"
-              canEdit={canAdmin}
-              toggleLabel="有効"
-              enableSortOrder
-              createToggleDefault
-              rows={masters.channels.map((channel) => ({
-                id: channel.id,
-                name: channel.name,
-                sortOrder: channel.sort_order,
-                toggle: channel.is_active
-              }))}
-              onCreate={async ({ name, toggle }) =>
-                createMaster("channels", name, {
-                  sortOrder: getNextSortOrder(masters.channels.map((channel) => channel.sort_order)),
-                  isActive: toggle
-                })
-              }
-              onReorder={async (orderedIds) => reorderMasters("channels", orderedIds)}
-              onSave={async (id, patch) =>
-                patchMaster("channels", id, {
-                  name: patch.name,
-                  sortOrder: patch.sortOrder,
-                  isActive: patch.toggle
-                })
-              }
-              onDelete={async (id) => deleteMaster("channels", id)}
-            />
-          ) : null}
+            {masterTab === "channels" ? (
+              <MasterTableEditor
+                title="チャンネル"
+                canEdit={canAdmin}
+                toggleLabel="有効"
+                enableSortOrder
+                createToggleDefault
+                rows={masters.channels.map((channel) => ({
+                  id: channel.id,
+                  name: channel.name,
+                  sortOrder: channel.sort_order,
+                  toggle: channel.is_active
+                }))}
+                onCreate={async ({ name, toggle }) =>
+                  createMaster("channels", name, {
+                    sortOrder: getNextSortOrder(masters.channels.map((channel) => channel.sort_order)),
+                    isActive: toggle
+                  })
+                }
+                onReorder={async (orderedIds) => reorderMasters("channels", orderedIds)}
+                onSave={async (id, patch) =>
+                  patchMaster("channels", id, {
+                    name: patch.name,
+                    sortOrder: patch.sortOrder,
+                    isActive: patch.toggle
+                  })
+                }
+                onDelete={async (id) => deleteMaster("channels", id)}
+              />
+            ) : null}
 
-          {masterTab === "task_types" ? (
-            <MasterTableEditor
-              title="タスク種"
-              canEdit={canAdmin}
-              toggleLabel="有効"
-              enableSortOrder
-              createToggleDefault
-              rows={masters.taskTypes.map((taskType) => ({
-                id: taskType.id,
-                name: taskType.name,
-                sortOrder: taskType.sort_order,
-                toggle: taskType.is_active
-              }))}
-              onCreate={async ({ name, toggle }) =>
-                createMaster("task_types", name, {
-                  sortOrder: getNextSortOrder(masters.taskTypes.map((taskType) => taskType.sort_order)),
-                  isActive: toggle
-                })
-              }
-              onReorder={async (orderedIds) => reorderMasters("task_types", orderedIds)}
-              onSave={async (id, patch) =>
-                patchMaster("task_types", id, {
-                  name: patch.name,
-                  sortOrder: patch.sortOrder,
-                  isActive: patch.toggle
-                })
-              }
-              onDelete={async (id) => deleteMaster("task_types", id)}
-            />
-          ) : null}
+            {masterTab === "task_types" ? (
+              <MasterTableEditor
+                title="タスク種"
+                canEdit={canAdmin}
+                toggleLabel="有効"
+                enableSortOrder
+                createToggleDefault
+                rows={masters.taskTypes.map((taskType) => ({
+                  id: taskType.id,
+                  name: taskType.name,
+                  sortOrder: taskType.sort_order,
+                  toggle: taskType.is_active
+                }))}
+                onCreate={async ({ name, toggle }) =>
+                  createMaster("task_types", name, {
+                    sortOrder: getNextSortOrder(masters.taskTypes.map((taskType) => taskType.sort_order)),
+                    isActive: toggle
+                  })
+                }
+                onReorder={async (orderedIds) => reorderMasters("task_types", orderedIds)}
+                onSave={async (id, patch) =>
+                  patchMaster("task_types", id, {
+                    name: patch.name,
+                    sortOrder: patch.sortOrder,
+                    isActive: patch.toggle
+                  })
+                }
+                onDelete={async (id) => deleteMaster("task_types", id)}
+              />
+            ) : null}
 
-          {masterTab === "assignees" ? (
-            <MasterTableEditor
-              title="担当者"
-              canEdit={canAdmin}
-              toggleLabel="有効"
-              enableSortOrder
-              createToggleDefault
-              rows={masters.assignees.map((assignee) => ({
-                id: assignee.id,
-                name: assignee.display_name,
-                sortOrder: assignee.sort_order,
-                toggle: assignee.is_active
-              }))}
-              onCreate={async ({ name, toggle }) =>
-                createMaster("assignees", name, {
-                  sortOrder: getNextSortOrder(masters.assignees.map((assignee) => assignee.sort_order)),
-                  isActive: toggle
-                })
-              }
-              onReorder={async (orderedIds) => reorderMasters("assignees", orderedIds)}
-              onSave={async (id, patch) =>
-                patchMaster("assignees", id, {
-                  name: patch.name,
-                  sortOrder: patch.sortOrder,
-                  isActive: patch.toggle
-                })
-              }
-              onDelete={async (id) => deleteMaster("assignees", id)}
-            />
-          ) : null}
+            {masterTab === "assignees" ? (
+              <MasterTableEditor
+                title="担当者"
+                canEdit={canAdmin}
+                toggleLabel="有効"
+                enableSortOrder
+                createToggleDefault
+                rows={masters.assignees.map((assignee) => ({
+                  id: assignee.id,
+                  name: assignee.display_name,
+                  sortOrder: assignee.sort_order,
+                  toggle: assignee.is_active
+                }))}
+                onCreate={async ({ name, toggle }) =>
+                  createMaster("assignees", name, {
+                    sortOrder: getNextSortOrder(masters.assignees.map((assignee) => assignee.sort_order)),
+                    isActive: toggle
+                  })
+                }
+                onReorder={async (orderedIds) => reorderMasters("assignees", orderedIds)}
+                onSave={async (id, patch) =>
+                  patchMaster("assignees", id, {
+                    name: patch.name,
+                    sortOrder: patch.sortOrder,
+                    isActive: patch.toggle
+                  })
+                }
+                onDelete={async (id) => deleteMaster("assignees", id)}
+              />
+            ) : null}
 
-          {masterTab === "task_statuses" ? (
-            <MasterTableEditor
-              title="タスクステータス"
-              canEdit={canAdmin}
-              toggleLabel="完了扱い"
-              enableSortOrder
-              rows={masters.taskStatuses.map((status) => ({
-                id: status.id,
-                name: status.name,
-                sortOrder: status.sort_order,
-                toggle: status.is_done
-              }))}
-              onCreate={async ({ name, toggle }) =>
-                createMaster("task_statuses", name, {
-                  sortOrder: getNextSortOrder(masters.taskStatuses.map((status) => status.sort_order)),
-                  isDone: toggle
-                })
-              }
-              onReorder={async (orderedIds) => reorderMasters("task_statuses", orderedIds)}
-              onSave={async (id, patch) =>
-                patchMaster("task_statuses", id, {
-                  name: patch.name,
-                  sortOrder: patch.sortOrder,
-                  isDone: patch.toggle
-                })
-              }
-              onDelete={async (id) => deleteMaster("task_statuses", id)}
-            />
-          ) : null}
+            {masterTab === "task_statuses" ? (
+              <MasterTableEditor
+                title="タスクステータス"
+                canEdit={canAdmin}
+                toggleLabel="完了扱い"
+                enableSortOrder
+                rows={masters.taskStatuses.map((status) => ({
+                  id: status.id,
+                  name: status.name,
+                  sortOrder: status.sort_order,
+                  toggle: status.is_done
+                }))}
+                onCreate={async ({ name, toggle }) =>
+                  createMaster("task_statuses", name, {
+                    sortOrder: getNextSortOrder(masters.taskStatuses.map((status) => status.sort_order)),
+                    isDone: toggle
+                  })
+                }
+                onReorder={async (orderedIds) => reorderMasters("task_statuses", orderedIds)}
+                onSave={async (id, patch) =>
+                  patchMaster("task_statuses", id, {
+                    name: patch.name,
+                    sortOrder: patch.sortOrder,
+                    isDone: patch.toggle
+                  })
+                }
+                onDelete={async (id) => deleteMaster("task_statuses", id)}
+              />
+            ) : null}
 
-          {masterTab === "members" ? (
-            <MemberRoleTable canEdit={canAdmin} members={members} onUpdateRole={updateMemberRole} />
-          ) : null}
+            {masterTab === "members" ? (
+              <MemberRoleTable canEdit={canAdmin} members={members} onUpdateRole={updateMemberRole} />
+            ) : null}
+          </div>
         </section>
       ) : null}
 
