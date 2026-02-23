@@ -628,34 +628,25 @@ export function ScheduleDashboard({
     }
   };
 
-  const releaseByChannel = useMemo(() => {
-    const visibleScriptIds = new Set(tasks.map((task) => task.script_id));
-    const filteredReleaseDates = releaseDates.filter((releaseDate) => {
+  const visibleReleaseDates = useMemo(() => {
+    return releaseDates.filter((releaseDate) => {
       if (filters.channelId !== "all" && releaseDate.channel_id !== filters.channelId) {
         return false;
       }
-      return visibleScriptIds.has(releaseDate.script_id);
+      return true;
     });
+  }, [releaseDates, filters.channelId]);
 
+  const releaseByChannel = useMemo(() => {
     const map = new Map<string, ReleaseDateRow[]>();
-    for (const releaseDate of filteredReleaseDates) {
+    for (const releaseDate of visibleReleaseDates) {
       if (!map.has(releaseDate.channel_id)) {
         map.set(releaseDate.channel_id, []);
       }
       map.get(releaseDate.channel_id)?.push(releaseDate);
     }
     return map;
-  }, [releaseDates, tasks, filters.channelId]);
-
-  const visibleReleaseDates = useMemo(() => {
-    const visibleScriptIds = new Set(tasks.map((task) => task.script_id));
-    return releaseDates.filter((releaseDate) => {
-      if (filters.channelId !== "all" && releaseDate.channel_id !== filters.channelId) {
-        return false;
-      }
-      return visibleScriptIds.has(releaseDate.script_id);
-    });
-  }, [releaseDates, tasks, filters.channelId]);
+  }, [visibleReleaseDates]);
 
   const timelineDayCells = useMemo<TimelineDayCell[]>(
     () =>
