@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { releaseDateCreateSchema, releaseDatePatchSchema } from "@/lib/api";
+import { releaseDateCreateSchema, releaseDateDeleteSchema, releaseDatePatchSchema } from "@/lib/api";
 import { canEdit, getWorkspaceRole, requireUser } from "@/lib/auth";
 import { createServerSupabase } from "@/lib/supabase/server";
 import type { ReleaseDateRow } from "@/types/domain";
@@ -209,4 +209,35 @@ export async function PATCH(request: Request) {
   }
 
   return NextResponse.json({ data: mapRows([data as ReleaseDateJoinRow])[0] });
+}
+
+export async function DELETE(request: Request) {
+  const auth = await requireUser();
+  if (auth.error) {
+    return auth.error;
+  }
+
+  const json = await request.json();
+  const parsed = releaseDateDeleteSchema.safeParse(json);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
+
+  const payload = parsed.data;
+  const role = await getWorkspaceRole(auth.supabase, payload.workspaceId);
+  if (!canEdit(role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const { error } = await auth.supabase
+    .from("release_dates")
+    .delete()
+    .eq("id", payload.id)
+    .eq("workspace_id", payload.workspaceId);
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ ok: true });
 }

@@ -46,6 +46,8 @@ const RELEASE_ROW_TONES = ["#dfe8f7", "#f0e4d1", "#efe9d7", "#f3e8d7", "#e3ebdd"
 
 type GroupBy = "channel" | "none";
 type MasterResource = "channels" | "task_types" | "assignees" | "task_statuses";
+type ViewTab = "schedule" | "masters";
+type MasterTab = "release_dates" | "channels" | "task_types" | "assignees" | "task_statuses" | "members";
 
 type Filters = {
   channelId: string;
@@ -214,6 +216,8 @@ export function ScheduleDashboard({
     releaseDate: today(),
     label: ""
   });
+  const [viewTab, setViewTab] = useState<ViewTab>("schedule");
+  const [masterTab, setMasterTab] = useState<MasterTab>("release_dates");
 
   const [laneInteraction, setLaneInteraction] = useState<LaneInteraction | null>(null);
   const [barInteraction, setBarInteraction] = useState<BarInteraction | null>(null);
@@ -498,12 +502,57 @@ export function ScheduleDashboard({
     }
   };
 
-  const createMaster = async (resource: MasterResource, name: string) => {
+  const handlePatchReleaseDate = async (id: string, patch: { releaseDate?: string; label?: string | null }) => {
+    try {
+      await fetchJson("/api/release-dates", {
+        method: "PATCH",
+        body: JSON.stringify({
+          workspaceId,
+          id,
+          ...patch
+        })
+      });
+      await loadReleaseDates();
+      return true;
+    } catch (releaseError) {
+      setError(releaseError instanceof Error ? releaseError.message : "公開日更新に失敗しました");
+      return false;
+    }
+  };
+
+  const handleDeleteReleaseDate = async (id: string) => {
+    if (!window.confirm("この公開日を削除しますか？")) return false;
+
+    try {
+      await fetchJson("/api/release-dates", {
+        method: "DELETE",
+        body: JSON.stringify({
+          workspaceId,
+          id
+        })
+      });
+      await loadReleaseDates();
+      return true;
+    } catch (releaseError) {
+      setError(releaseError instanceof Error ? releaseError.message : "公開日削除に失敗しました");
+      return false;
+    }
+  };
+
+  const createMaster = async (
+    resource: MasterResource,
+    name: string,
+    options?: { sortOrder?: number; isActive?: boolean; isDone?: boolean }
+  ) => {
     if (!name.trim()) return;
     try {
       await fetchJson(`/api/masters/${resource}`, {
         method: "POST",
-        body: JSON.stringify({ workspaceId, name: name.trim() })
+        body: JSON.stringify({
+          workspaceId,
+          name: name.trim(),
+          ...options
+        })
       });
       await loadMasters();
     } catch (masterError) {
@@ -789,109 +838,132 @@ export function ScheduleDashboard({
             </p>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <label>
-              Group
-              <select
-                value={groupBy}
-                onChange={(event) => setGroupBy(event.target.value as GroupBy)}
-                style={{ marginLeft: 6 }}
-              >
-                <option value="channel">チャンネル</option>
-                <option value="none">なし</option>
-              </select>
-            </label>
-            <label>
-              Sort
-              <select
-                value={sortBy}
-                onChange={(event) => setSortBy(event.target.value as SortBy)}
-                style={{ marginLeft: 6 }}
-              >
-                <option value="script_no_asc">脚本番号 ↑</option>
-                <option value="script_no_desc">脚本番号 ↓</option>
-                <option value="start_date_asc">開始日 ↑</option>
-                <option value="start_date_desc">開始日 ↓</option>
-              </select>
-            </label>
-            <label>
-              期間
-              <input
-                type="date"
-                value={rangeStart}
-                onChange={(event) => setRangeStart(event.target.value)}
-                style={{ marginLeft: 6 }}
-              />
-              <span style={{ margin: "0 4px" }}>~</span>
-              <input type="date" value={rangeEnd} onChange={(event) => setRangeEnd(event.target.value)} />
-            </label>
+            <button
+              type="button"
+              className={viewTab === "schedule" ? "primary" : undefined}
+              onClick={() => setViewTab("schedule")}
+            >
+              スケジュール
+            </button>
+            <button
+              type="button"
+              className={viewTab === "masters" ? "primary" : undefined}
+              onClick={() => setViewTab("masters")}
+            >
+              マスター管理
+            </button>
           </div>
         </div>
 
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          <label>
-            チャンネル
-            <select
-              value={filters.channelId}
-              onChange={(event) => setFilters((current) => ({ ...current, channelId: event.target.value }))}
-              style={{ marginLeft: 6 }}
-            >
-              <option value="all">すべて</option>
-              {masters.channels.map((channel) => (
-                <option key={channel.id} value={channel.id}>
-                  {channel.name}
-                </option>
-              ))}
-            </select>
-          </label>
+        {viewTab === "schedule" ? (
+          <>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <label>
+                Group
+                <select
+                  value={groupBy}
+                  onChange={(event) => setGroupBy(event.target.value as GroupBy)}
+                  style={{ marginLeft: 6 }}
+                >
+                  <option value="channel">チャンネル</option>
+                  <option value="none">なし</option>
+                </select>
+              </label>
+              <label>
+                Sort
+                <select
+                  value={sortBy}
+                  onChange={(event) => setSortBy(event.target.value as SortBy)}
+                  style={{ marginLeft: 6 }}
+                >
+                  <option value="script_no_asc">脚本番号 ↑</option>
+                  <option value="script_no_desc">脚本番号 ↓</option>
+                  <option value="start_date_asc">開始日 ↑</option>
+                  <option value="start_date_desc">開始日 ↓</option>
+                </select>
+              </label>
+              <label>
+                期間
+                <input
+                  type="date"
+                  value={rangeStart}
+                  onChange={(event) => setRangeStart(event.target.value)}
+                  style={{ marginLeft: 6 }}
+                />
+                <span style={{ margin: "0 4px" }}>~</span>
+                <input type="date" value={rangeEnd} onChange={(event) => setRangeEnd(event.target.value)} />
+              </label>
+            </div>
 
-          <label>
-            担当
-            <select
-              value={filters.assigneeId}
-              onChange={(event) => setFilters((current) => ({ ...current, assigneeId: event.target.value }))}
-              style={{ marginLeft: 6 }}
-            >
-              <option value="all">すべて</option>
-              {masters.assignees.map((assignee) => (
-                <option key={assignee.id} value={assignee.id}>
-                  {assignee.display_name}
-                </option>
-              ))}
-            </select>
-          </label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <label>
+                チャンネル
+                <select
+                  value={filters.channelId}
+                  onChange={(event) => setFilters((current) => ({ ...current, channelId: event.target.value }))}
+                  style={{ marginLeft: 6 }}
+                >
+                  <option value="all">すべて</option>
+                  {masters.channels.map((channel) => (
+                    <option key={channel.id} value={channel.id}>
+                      {channel.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-          <label>
-            ステータス
-            <select
-              value={filters.statusId}
-              onChange={(event) => setFilters((current) => ({ ...current, statusId: event.target.value }))}
-              style={{ marginLeft: 6 }}
-            >
-              <option value="all">すべて</option>
-              {masters.taskStatuses.map((status) => (
-                <option key={status.id} value={status.id}>
-                  {status.name}
-                </option>
-              ))}
-            </select>
-          </label>
+              <label>
+                担当
+                <select
+                  value={filters.assigneeId}
+                  onChange={(event) => setFilters((current) => ({ ...current, assigneeId: event.target.value }))}
+                  style={{ marginLeft: 6 }}
+                >
+                  <option value="all">すべて</option>
+                  {masters.assignees.map((assignee) => (
+                    <option key={assignee.id} value={assignee.id}>
+                      {assignee.display_name}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-          <label>
-            タスク種
-            <select
-              value={filters.taskTypeId}
-              onChange={(event) => setFilters((current) => ({ ...current, taskTypeId: event.target.value }))}
-              style={{ marginLeft: 6 }}
-            >
-              <option value="all">すべて</option>
-              {masters.taskTypes.map((taskType) => (
-                <option key={taskType.id} value={taskType.id}>
-                  {taskType.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
+              <label>
+                ステータス
+                <select
+                  value={filters.statusId}
+                  onChange={(event) => setFilters((current) => ({ ...current, statusId: event.target.value }))}
+                  style={{ marginLeft: 6 }}
+                >
+                  <option value="all">すべて</option>
+                  {masters.taskStatuses.map((status) => (
+                    <option key={status.id} value={status.id}>
+                      {status.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                タスク種
+                <select
+                  value={filters.taskTypeId}
+                  onChange={(event) => setFilters((current) => ({ ...current, taskTypeId: event.target.value }))}
+                  style={{ marginLeft: 6 }}
+                >
+                  <option value="all">すべて</option>
+                  {masters.taskTypes.map((taskType) => (
+                    <option key={taskType.id} value={taskType.id}>
+                      {taskType.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </>
+        ) : (
+          <div className="muted">公開日と各種マスターをテーブル形式でCRUDできます。</div>
+        )}
 
         {error ? (
           <div className="card" style={{ padding: 10, color: "var(--danger)", borderColor: "#d8bbbb" }}>
@@ -900,6 +972,7 @@ export function ScheduleDashboard({
         ) : null}
       </section>
 
+      {viewTab === "schedule" ? (
       <section className="card" style={{ overflow: "hidden" }}>
         <div
           style={{
@@ -1515,171 +1588,163 @@ export function ScheduleDashboard({
           </div>
         </div>
       </section>
+      ) : null}
 
-      <section className="card" style={{ padding: 16, display: "grid", gap: 12 }}>
-        <h2 style={{ margin: 0, fontSize: 18 }}>公開日マーカー管理</h2>
-        <form onSubmit={handleSaveReleaseDate} style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(6, minmax(0, 1fr))" }}>
-          <select
-            value={releaseForm.channelId}
-            onChange={(event) => setReleaseForm((current) => ({ ...current, channelId: event.target.value }))}
-            required
-          >
-            {masters.channels.map((channel) => (
-              <option key={channel.id} value={channel.id}>
-                {channel.name}
-              </option>
-            ))}
-          </select>
-
-          <input
-            value={releaseForm.scriptNo}
-            placeholder="脚本番号"
-            onChange={(event) => setReleaseForm((current) => ({ ...current, scriptNo: event.target.value }))}
-            required
-          />
-
-          <input
-            value={releaseForm.scriptTitle}
-            placeholder="タイトル(任意)"
-            onChange={(event) => setReleaseForm((current) => ({ ...current, scriptTitle: event.target.value }))}
-          />
-
-          <input
-            type="date"
-            value={releaseForm.releaseDate}
-            onChange={(event) => setReleaseForm((current) => ({ ...current, releaseDate: event.target.value }))}
-            required
-          />
-
-          <input
-            value={releaseForm.label}
-            placeholder="ラベル(任意)"
-            onChange={(event) => setReleaseForm((current) => ({ ...current, label: event.target.value }))}
-          />
-
-          <button className="primary" type="submit" disabled={!canWrite}>
-            保存
-          </button>
-        </form>
-
-        {knownScripts.length ? (
-          <div className="muted" style={{ fontSize: 12 }}>
-            既存脚本番号: {knownScripts.map((script) => script.scriptNo).join(", ")}
-          </div>
-        ) : null}
-      </section>
-
-      <section className="card" style={{ padding: 16, display: "grid", gap: 12 }}>
-        <h2 style={{ margin: 0, fontSize: 18 }}>ロール管理</h2>
-        <div className="muted" style={{ fontSize: 13 }}>
-          管理者のみ変更可能です。ユーザー招待自体はSupabase Auth側で行ってください。
-        </div>
-        <div style={{ display: "grid", gap: 8 }}>
-          {members.map((member) => (
-            <div
-              key={member.user_id}
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 180px",
-                gap: 10,
-                alignItems: "center",
-                border: "1px solid var(--line)",
-                borderRadius: 8,
-                padding: "8px 10px"
-              }}
-            >
-              <div>
-                <div style={{ fontSize: 13, wordBreak: "break-all" }}>{member.user_id}</div>
-                <div className="muted" style={{ fontSize: 12 }}>
-                  joined: {member.created_at.slice(0, 10)}
-                </div>
-              </div>
-
-              <select
-                value={member.role}
-                disabled={!canAdmin}
-                onChange={(event) => {
-                  void updateMemberRole(member.user_id, event.target.value as WorkspaceRole);
-                }}
-              >
-                <option value="admin">admin</option>
-                <option value="editor">editor</option>
-                <option value="viewer">viewer</option>
-              </select>
+      {viewTab === "masters" ? (
+        <section className="card" style={{ padding: 16, display: "grid", gap: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+            <h2 style={{ margin: 0, fontSize: 18 }}>マスター管理</h2>
+            <div className="muted" style={{ fontSize: 13 }}>
+              タブを切り替えて各マスターをテーブルで操作できます。
             </div>
-          ))}
+          </div>
 
-          {!members.length ? <div className="muted">メンバーがまだいません。</div> : null}
-        </div>
-      </section>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" className={masterTab === "release_dates" ? "primary" : undefined} onClick={() => setMasterTab("release_dates")}>
+              公開日
+            </button>
+            <button type="button" className={masterTab === "channels" ? "primary" : undefined} onClick={() => setMasterTab("channels")}>
+              チャンネル
+            </button>
+            <button type="button" className={masterTab === "task_types" ? "primary" : undefined} onClick={() => setMasterTab("task_types")}>
+              タスク種
+            </button>
+            <button type="button" className={masterTab === "assignees" ? "primary" : undefined} onClick={() => setMasterTab("assignees")}>
+              担当者
+            </button>
+            <button
+              type="button"
+              className={masterTab === "task_statuses" ? "primary" : undefined}
+              onClick={() => setMasterTab("task_statuses")}
+            >
+              タスクステータス
+            </button>
+            <button type="button" className={masterTab === "members" ? "primary" : undefined} onClick={() => setMasterTab("members")}>
+              ロール
+            </button>
+          </div>
 
-      <section className="card" style={{ padding: 16, display: "grid", gap: 12 }}>
-        <h2 style={{ margin: 0, fontSize: 18 }}>マスタ管理</h2>
-        {!canAdmin ? <div className="muted">管理者のみ編集できます。</div> : null}
-        <MasterEditor
-          title="チャンネル"
-          resource="channels"
-          items={masters.channels.map((channel) => ({
-            id: channel.id,
-            label: channel.name,
-            toggle: channel.is_active
-          }))}
-          toggleLabel="有効"
-          canEdit={canAdmin}
-          onCreate={async (name) => createMaster("channels", name)}
-          onToggle={async (id, toggle) => patchMaster("channels", id, { isActive: toggle })}
-          onRename={async (id, name) => patchMaster("channels", id, { name })}
-          onDelete={async (id) => deleteMaster("channels", id)}
-        />
+          {masterTab === "release_dates" ? (
+            <ReleaseDateTable
+              canEdit={canWrite}
+              channels={masters.channels}
+              releaseDates={releaseDates}
+              releaseForm={releaseForm}
+              knownScripts={knownScripts}
+              onReleaseFormChange={setReleaseForm}
+              onCreate={handleSaveReleaseDate}
+              onSave={handlePatchReleaseDate}
+              onDelete={handleDeleteReleaseDate}
+            />
+          ) : null}
 
-        <MasterEditor
-          title="タスク種"
-          resource="task_types"
-          items={masters.taskTypes.map((taskType) => ({
-            id: taskType.id,
-            label: taskType.name,
-            toggle: taskType.is_active
-          }))}
-          toggleLabel="有効"
-          canEdit={canAdmin}
-          onCreate={async (name) => createMaster("task_types", name)}
-          onToggle={async (id, toggle) => patchMaster("task_types", id, { isActive: toggle })}
-          onRename={async (id, name) => patchMaster("task_types", id, { name })}
-          onDelete={async (id) => deleteMaster("task_types", id)}
-        />
+          {masterTab === "channels" ? (
+            <MasterTableEditor
+              title="チャンネル"
+              canEdit={canAdmin}
+              toggleLabel="有効"
+              enableSortOrder
+              createToggleDefault
+              rows={masters.channels.map((channel) => ({
+                id: channel.id,
+                name: channel.name,
+                sortOrder: channel.sort_order,
+                toggle: channel.is_active
+              }))}
+              onCreate={async ({ name, sortOrder, toggle }) =>
+                createMaster("channels", name, { sortOrder, isActive: toggle })
+              }
+              onSave={async (id, patch) =>
+                patchMaster("channels", id, {
+                  name: patch.name,
+                  sortOrder: patch.sortOrder,
+                  isActive: patch.toggle
+                })
+              }
+              onDelete={async (id) => deleteMaster("channels", id)}
+            />
+          ) : null}
 
-        <MasterEditor
-          title="担当者"
-          resource="assignees"
-          items={masters.assignees.map((assignee) => ({
-            id: assignee.id,
-            label: assignee.display_name,
-            toggle: assignee.is_active
-          }))}
-          toggleLabel="有効"
-          canEdit={canAdmin}
-          onCreate={async (name) => createMaster("assignees", name)}
-          onToggle={async (id, toggle) => patchMaster("assignees", id, { isActive: toggle })}
-          onRename={async (id, name) => patchMaster("assignees", id, { name })}
-          onDelete={async (id) => deleteMaster("assignees", id)}
-        />
+          {masterTab === "task_types" ? (
+            <MasterTableEditor
+              title="タスク種"
+              canEdit={canAdmin}
+              toggleLabel="有効"
+              enableSortOrder
+              createToggleDefault
+              rows={masters.taskTypes.map((taskType) => ({
+                id: taskType.id,
+                name: taskType.name,
+                sortOrder: taskType.sort_order,
+                toggle: taskType.is_active
+              }))}
+              onCreate={async ({ name, sortOrder, toggle }) =>
+                createMaster("task_types", name, { sortOrder, isActive: toggle })
+              }
+              onSave={async (id, patch) =>
+                patchMaster("task_types", id, {
+                  name: patch.name,
+                  sortOrder: patch.sortOrder,
+                  isActive: patch.toggle
+                })
+              }
+              onDelete={async (id) => deleteMaster("task_types", id)}
+            />
+          ) : null}
 
-        <MasterEditor
-          title="タスクステータス"
-          resource="task_statuses"
-          items={masters.taskStatuses.map((status) => ({
-            id: status.id,
-            label: status.name,
-            toggle: status.is_done
-          }))}
-          toggleLabel="完了扱い"
-          canEdit={canAdmin}
-          onCreate={async (name) => createMaster("task_statuses", name)}
-          onToggle={async (id, toggle) => patchMaster("task_statuses", id, { isDone: toggle })}
-          onRename={async (id, name) => patchMaster("task_statuses", id, { name })}
-          onDelete={async (id) => deleteMaster("task_statuses", id)}
-        />
-      </section>
+          {masterTab === "assignees" ? (
+            <MasterTableEditor
+              title="担当者"
+              canEdit={canAdmin}
+              toggleLabel="有効"
+              createToggleDefault
+              rows={masters.assignees.map((assignee) => ({
+                id: assignee.id,
+                name: assignee.display_name,
+                toggle: assignee.is_active
+              }))}
+              onCreate={async ({ name, toggle }) => createMaster("assignees", name, { isActive: toggle })}
+              onSave={async (id, patch) =>
+                patchMaster("assignees", id, {
+                  name: patch.name,
+                  isActive: patch.toggle
+                })
+              }
+              onDelete={async (id) => deleteMaster("assignees", id)}
+            />
+          ) : null}
+
+          {masterTab === "task_statuses" ? (
+            <MasterTableEditor
+              title="タスクステータス"
+              canEdit={canAdmin}
+              toggleLabel="完了扱い"
+              enableSortOrder
+              rows={masters.taskStatuses.map((status) => ({
+                id: status.id,
+                name: status.name,
+                sortOrder: status.sort_order,
+                toggle: status.is_done
+              }))}
+              onCreate={async ({ name, sortOrder, toggle }) =>
+                createMaster("task_statuses", name, { sortOrder, isDone: toggle })
+              }
+              onSave={async (id, patch) =>
+                patchMaster("task_statuses", id, {
+                  name: patch.name,
+                  sortOrder: patch.sortOrder,
+                  isDone: patch.toggle
+                })
+              }
+              onDelete={async (id) => deleteMaster("task_statuses", id)}
+            />
+          ) : null}
+
+          {masterTab === "members" ? (
+            <MemberRoleTable canEdit={canAdmin} members={members} onUpdateRole={updateMemberRole} />
+          ) : null}
+        </section>
+      ) : null}
 
       {createForm && createDraft ? (
         <div
@@ -2018,143 +2083,511 @@ export function ScheduleDashboard({
   );
 }
 
-function MasterEditor({
-  title,
-  resource,
-  items,
-  toggleLabel,
+function ReleaseDateTable({
   canEdit,
+  channels,
+  releaseDates,
+  releaseForm,
+  knownScripts,
+  onReleaseFormChange,
   onCreate,
-  onToggle,
-  onRename,
+  onSave,
   onDelete
 }: {
-  title: string;
-  resource: string;
-  items: { id: string; label: string; toggle: boolean }[];
-  toggleLabel: string;
   canEdit: boolean;
-  onCreate: (name: string) => Promise<void>;
-  onToggle: (id: string, toggle: boolean) => Promise<void>;
-  onRename: (id: string, name: string) => Promise<void>;
-  onDelete: (id: string) => Promise<void>;
+  channels: Channel[];
+  releaseDates: ReleaseDateRow[];
+  releaseForm: ReleaseForm;
+  knownScripts: { scriptNo: string; title: string }[];
+  onReleaseFormChange: React.Dispatch<React.SetStateAction<ReleaseForm>>;
+  onCreate: (event: React.FormEvent<HTMLFormElement>) => Promise<void>;
+  onSave: (id: string, patch: { releaseDate?: string; label?: string | null }) => Promise<boolean>;
+  onDelete: (id: string) => Promise<boolean>;
 }) {
-  const [name, setName] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [rowBusyId, setRowBusyId] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, { releaseDate: string; label: string }>>({});
 
-  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!canEdit || !name.trim()) return;
-
-    setBusy(true);
-    try {
-      await onCreate(name.trim());
-      setName("");
-    } finally {
-      setBusy(false);
-    }
-  };
+  const rows = useMemo(
+    () =>
+      [...releaseDates].sort((left, right) => {
+        if (left.release_date !== right.release_date) {
+          return left.release_date.localeCompare(right.release_date);
+        }
+        if (left.channel_name !== right.channel_name) {
+          return left.channel_name.localeCompare(right.channel_name);
+        }
+        return left.script_no.localeCompare(right.script_no);
+      }),
+    [releaseDates]
+  );
 
   return (
-    <div className="card" style={{ padding: 12, display: "grid", gap: 10 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
-        <strong>{title}</strong>
-        <span className="muted" style={{ fontSize: 12 }}>
-          {resource}
-        </span>
-      </div>
+    <div style={{ display: "grid", gap: 10 }}>
+      <form
+        onSubmit={(event) => {
+          void onCreate(event);
+        }}
+        style={{ display: "grid", gap: 8, gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr auto" }}
+      >
+        <select
+          value={releaseForm.channelId}
+          onChange={(event) => onReleaseFormChange((current) => ({ ...current, channelId: event.target.value }))}
+          required
+          disabled={!canEdit}
+        >
+          {channels.map((channel) => (
+            <option key={channel.id} value={channel.id}>
+              {channel.name}
+            </option>
+          ))}
+        </select>
 
-      <form onSubmit={submit} style={{ display: "flex", gap: 8 }}>
         <input
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          placeholder={`${title}を追加`}
-          disabled={!canEdit || busy}
+          value={releaseForm.scriptNo}
+          placeholder="脚本番号"
+          onChange={(event) => onReleaseFormChange((current) => ({ ...current, scriptNo: event.target.value }))}
+          required
+          disabled={!canEdit}
         />
-        <button type="submit" className="primary" disabled={!canEdit || busy}>
+
+        <input
+          value={releaseForm.scriptTitle}
+          placeholder="タイトル(任意)"
+          onChange={(event) => onReleaseFormChange((current) => ({ ...current, scriptTitle: event.target.value }))}
+          disabled={!canEdit}
+        />
+
+        <input
+          type="date"
+          value={releaseForm.releaseDate}
+          onChange={(event) => onReleaseFormChange((current) => ({ ...current, releaseDate: event.target.value }))}
+          required
+          disabled={!canEdit}
+        />
+
+        <input
+          value={releaseForm.label}
+          placeholder="ラベル(任意)"
+          onChange={(event) => onReleaseFormChange((current) => ({ ...current, label: event.target.value }))}
+          disabled={!canEdit}
+        />
+
+        <button className="primary" type="submit" disabled={!canEdit}>
           追加
         </button>
       </form>
 
-      <div style={{ display: "grid", gap: 6 }}>
-        {items.map((item) => (
-          <div
-            key={item.id}
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "flex-start",
-              gap: 10,
-              border: "1px solid var(--line)",
-              borderRadius: 8,
-              padding: "8px 10px"
-            }}
-          >
-            <input
-              value={drafts[item.id] ?? item.label}
-              disabled={!canEdit || rowBusyId === item.id}
-              onChange={(event) => {
-                const value = event.target.value;
-                setDrafts((current) => ({ ...current, [item.id]: value }));
-              }}
-              style={{ flex: 1 }}
-            />
+      {knownScripts.length ? (
+        <div className="muted" style={{ fontSize: 12 }}>
+          既存脚本番号: {knownScripts.map((script) => script.scriptNo).join(", ")}
+        </div>
+      ) : null}
 
-            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
-                {toggleLabel}
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 880 }}>
+          <thead>
+            <tr style={{ background: "var(--panel-muted)" }}>
+              <th style={{ textAlign: "left", padding: "8px 10px", border: "1px solid var(--line)" }}>チャンネル</th>
+              <th style={{ textAlign: "left", padding: "8px 10px", border: "1px solid var(--line)" }}>脚本番号</th>
+              <th style={{ textAlign: "left", padding: "8px 10px", border: "1px solid var(--line)" }}>公開日</th>
+              <th style={{ textAlign: "left", padding: "8px 10px", border: "1px solid var(--line)" }}>ラベル</th>
+              <th style={{ textAlign: "left", padding: "8px 10px", border: "1px solid var(--line)" }}>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const draft = drafts[row.id];
+              const releaseDate = draft?.releaseDate ?? row.release_date;
+              const label = draft?.label ?? row.label ?? "";
+              const busy = rowBusyId === row.id;
+
+              return (
+                <tr key={row.id}>
+                  <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>{row.channel_name}</td>
+                  <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>{row.script_no}</td>
+                  <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>
+                    <input
+                      type="date"
+                      value={releaseDate}
+                      disabled={!canEdit || busy}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setDrafts((current) => ({
+                          ...current,
+                          [row.id]: {
+                            releaseDate: value,
+                            label
+                          }
+                        }));
+                      }}
+                    />
+                  </td>
+                  <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>
+                    <input
+                      value={label}
+                      disabled={!canEdit || busy}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setDrafts((current) => ({
+                          ...current,
+                          [row.id]: {
+                            releaseDate,
+                            label: value
+                          }
+                        }));
+                      }}
+                    />
+                  </td>
+                  <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button
+                        type="button"
+                        disabled={!canEdit || busy}
+                        onClick={async () => {
+                          const normalizedLabel = label.trim();
+                          const changed =
+                            releaseDate !== row.release_date || normalizedLabel !== (row.label ?? "");
+                          if (!changed) return;
+
+                          setRowBusyId(row.id);
+                          try {
+                            const saved = await onSave(row.id, {
+                              releaseDate,
+                              label: normalizedLabel ? normalizedLabel : null
+                            });
+                            if (saved) {
+                              setDrafts((current) => {
+                                const next = { ...current };
+                                delete next[row.id];
+                                return next;
+                              });
+                            }
+                          } finally {
+                            setRowBusyId(null);
+                          }
+                        }}
+                      >
+                        保存
+                      </button>
+                      <button
+                        type="button"
+                        className="danger"
+                        disabled={!canEdit || busy}
+                        onClick={async () => {
+                          setRowBusyId(row.id);
+                          try {
+                            await onDelete(row.id);
+                          } finally {
+                            setRowBusyId(null);
+                          }
+                        }}
+                      >
+                        削除
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+
+            {!rows.length ? (
+              <tr>
+                <td colSpan={5} className="muted" style={{ padding: 12, border: "1px solid var(--line)" }}>
+                  公開日データがありません。
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+type MasterTablePatch = {
+  name: string;
+  sortOrder?: number;
+  toggle: boolean;
+};
+
+function MasterTableEditor({
+  title,
+  rows,
+  toggleLabel,
+  canEdit,
+  enableSortOrder = false,
+  createToggleDefault = false,
+  onCreate,
+  onSave,
+  onDelete
+}: {
+  title: string;
+  rows: { id: string; name: string; sortOrder?: number; toggle: boolean }[];
+  toggleLabel: string;
+  canEdit: boolean;
+  enableSortOrder?: boolean;
+  createToggleDefault?: boolean;
+  onCreate: (patch: MasterTablePatch) => Promise<void>;
+  onSave: (id: string, patch: MasterTablePatch) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+}) {
+  const [createName, setCreateName] = useState("");
+  const [createSortOrder, setCreateSortOrder] = useState("");
+  const [createToggle, setCreateToggle] = useState(createToggleDefault);
+  const [busy, setBusy] = useState(false);
+  const [rowBusyId, setRowBusyId] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, { name?: string; sortOrder?: string; toggle?: boolean }>>({});
+
+  const parseSortOrder = (value: string): number | undefined => {
+    if (!value.trim()) return undefined;
+    const parsed = Number.parseInt(value, 10);
+    return Number.isNaN(parsed) ? undefined : parsed;
+  };
+
+  return (
+    <div style={{ display: "grid", gap: 10 }}>
+      <h3 style={{ margin: 0, fontSize: 16 }}>{title}</h3>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 780 }}>
+          <thead>
+            <tr style={{ background: "var(--panel-muted)" }}>
+              <th style={{ textAlign: "left", padding: "8px 10px", border: "1px solid var(--line)" }}>名称</th>
+              {enableSortOrder ? (
+                <th style={{ textAlign: "left", padding: "8px 10px", border: "1px solid var(--line)" }}>並び順</th>
+              ) : null}
+              <th style={{ textAlign: "left", padding: "8px 10px", border: "1px solid var(--line)" }}>{toggleLabel}</th>
+              <th style={{ textAlign: "left", padding: "8px 10px", border: "1px solid var(--line)" }}>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const draft = drafts[row.id];
+              const name = draft?.name ?? row.name;
+              const sortOrder = draft?.sortOrder ?? (row.sortOrder !== undefined ? String(row.sortOrder) : "");
+              const toggle = draft?.toggle ?? row.toggle;
+              const busyRow = rowBusyId === row.id;
+
+              return (
+                <tr key={row.id}>
+                  <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>
+                    <input
+                      value={name}
+                      disabled={!canEdit || busyRow}
+                      onChange={(event) =>
+                        setDrafts((current) => ({
+                          ...current,
+                          [row.id]: {
+                            ...current[row.id],
+                            name: event.target.value
+                          }
+                        }))
+                      }
+                    />
+                  </td>
+
+                  {enableSortOrder ? (
+                    <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>
+                      <input
+                        type="number"
+                        value={sortOrder}
+                        disabled={!canEdit || busyRow}
+                        onChange={(event) =>
+                          setDrafts((current) => ({
+                            ...current,
+                            [row.id]: {
+                              ...current[row.id],
+                              sortOrder: event.target.value
+                            }
+                          }))
+                        }
+                      />
+                    </td>
+                  ) : null}
+
+                  <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>
+                    <input
+                      type="checkbox"
+                      checked={toggle}
+                      disabled={!canEdit || busyRow}
+                      onChange={(event) =>
+                        setDrafts((current) => ({
+                          ...current,
+                          [row.id]: {
+                            ...current[row.id],
+                            toggle: event.target.checked
+                          }
+                        }))
+                      }
+                    />
+                  </td>
+
+                  <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button
+                        type="button"
+                        disabled={!canEdit || busyRow}
+                        onClick={async () => {
+                          const normalizedName = name.trim();
+                          if (!normalizedName) return;
+
+                          setRowBusyId(row.id);
+                          try {
+                            await onSave(row.id, {
+                              name: normalizedName,
+                              sortOrder: enableSortOrder ? parseSortOrder(sortOrder) : undefined,
+                              toggle
+                            });
+                            setDrafts((current) => {
+                              const next = { ...current };
+                              delete next[row.id];
+                              return next;
+                            });
+                          } finally {
+                            setRowBusyId(null);
+                          }
+                        }}
+                      >
+                        保存
+                      </button>
+                      <button
+                        type="button"
+                        className="danger"
+                        disabled={!canEdit || busyRow}
+                        onClick={async () => {
+                          if (!window.confirm(`${row.name} を削除しますか？`)) return;
+
+                          setRowBusyId(row.id);
+                          try {
+                            await onDelete(row.id);
+                          } finally {
+                            setRowBusyId(null);
+                          }
+                        }}
+                      >
+                        削除
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+
+            <tr style={{ background: "#fffdf8" }}>
+              <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>
+                <input
+                  value={createName}
+                  placeholder={`${title}を追加`}
+                  disabled={!canEdit || busy}
+                  onChange={(event) => setCreateName(event.target.value)}
+                />
+              </td>
+              {enableSortOrder ? (
+                <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>
+                  <input
+                    type="number"
+                    value={createSortOrder}
+                    disabled={!canEdit || busy}
+                    onChange={(event) => setCreateSortOrder(event.target.value)}
+                  />
+                </td>
+              ) : null}
+              <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>
                 <input
                   type="checkbox"
-                  checked={item.toggle}
-                  disabled={!canEdit || rowBusyId === item.id}
-                  onChange={async (event) => {
-                    if (!canEdit) return;
-                    setRowBusyId(item.id);
+                  checked={createToggle}
+                  disabled={!canEdit || busy}
+                  onChange={(event) => setCreateToggle(event.target.checked)}
+                />
+              </td>
+              <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={!canEdit || busy || !createName.trim()}
+                  onClick={async () => {
+                    const normalizedName = createName.trim();
+                    if (!normalizedName) return;
+
+                    setBusy(true);
                     try {
-                      await onToggle(item.id, event.target.checked);
+                      await onCreate({
+                        name: normalizedName,
+                        sortOrder: enableSortOrder ? parseSortOrder(createSortOrder) : undefined,
+                        toggle: createToggle
+                      });
+                      setCreateName("");
+                      setCreateSortOrder("");
+                      setCreateToggle(createToggleDefault);
                     } finally {
-                      setRowBusyId(null);
+                      setBusy(false);
                     }
                   }}
-                />
-              </label>
-              <button
-                type="button"
-                disabled={!canEdit || rowBusyId === item.id}
-                onClick={async () => {
-                  const candidate = (drafts[item.id] ?? item.label).trim();
-                  if (!candidate || candidate === item.label) return;
-                  setRowBusyId(item.id);
-                  try {
-                    await onRename(item.id, candidate);
-                  } finally {
-                    setRowBusyId(null);
-                  }
-                }}
-              >
-                保存
-              </button>
-              <button
-                type="button"
-                className="danger"
-                disabled={!canEdit || rowBusyId === item.id}
-                onClick={async () => {
-                  if (!window.confirm(`${item.label} を削除しますか？`)) return;
-                  setRowBusyId(item.id);
-                  try {
-                    await onDelete(item.id);
-                  } finally {
-                    setRowBusyId(null);
-                  }
-                }}
-              >
-                削除
-              </button>
-            </div>
-          </div>
-        ))}
+                >
+                  追加
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      {!canEdit ? <div className="muted">管理者のみ編集できます。</div> : null}
+    </div>
+  );
+}
+
+function MemberRoleTable({
+  canEdit,
+  members,
+  onUpdateRole
+}: {
+  canEdit: boolean;
+  members: WorkspaceMember[];
+  onUpdateRole: (userId: string, nextRole: WorkspaceRole) => Promise<void>;
+}) {
+  return (
+    <div style={{ display: "grid", gap: 10 }}>
+      <div className="muted" style={{ fontSize: 13 }}>
+        管理者のみ変更可能です。ユーザー招待自体はSupabase Auth側で行ってください。
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 680 }}>
+          <thead>
+            <tr style={{ background: "var(--panel-muted)" }}>
+              <th style={{ textAlign: "left", padding: "8px 10px", border: "1px solid var(--line)" }}>ユーザーID</th>
+              <th style={{ textAlign: "left", padding: "8px 10px", border: "1px solid var(--line)" }}>加入日</th>
+              <th style={{ textAlign: "left", padding: "8px 10px", border: "1px solid var(--line)" }}>ロール</th>
+            </tr>
+          </thead>
+          <tbody>
+            {members.map((member) => (
+              <tr key={member.user_id}>
+                <td style={{ padding: "8px 10px", border: "1px solid var(--line)", wordBreak: "break-all" }}>{member.user_id}</td>
+                <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>{member.created_at.slice(0, 10)}</td>
+                <td style={{ padding: "8px 10px", border: "1px solid var(--line)" }}>
+                  <select
+                    value={member.role}
+                    disabled={!canEdit}
+                    onChange={(event) => {
+                      void onUpdateRole(member.user_id, event.target.value as WorkspaceRole);
+                    }}
+                  >
+                    <option value="admin">admin</option>
+                    <option value="editor">editor</option>
+                    <option value="viewer">viewer</option>
+                  </select>
+                </td>
+              </tr>
+            ))}
+
+            {!members.length ? (
+              <tr>
+                <td colSpan={3} className="muted" style={{ padding: 12, border: "1px solid var(--line)" }}>
+                  メンバーがまだいません。
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
       </div>
     </div>
   );

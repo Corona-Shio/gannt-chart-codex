@@ -76,6 +76,11 @@ export const releaseDatePatchSchema = z.object({
   label: z.string().nullable().optional()
 });
 
+export const releaseDateDeleteSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid()
+});
+
 export const masterCreateSchema = z.object({
   workspaceId: z.string().uuid(),
   name: z.string().min(1),
