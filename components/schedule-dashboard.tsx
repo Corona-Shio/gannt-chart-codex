@@ -288,6 +288,23 @@ function buildImportTaskKey(input: {
   ].join("|");
 }
 
+function sortTaskRows(rows: TaskRow[], sortBy: SortBy): TaskRow[] {
+  const sorted = [...rows];
+  sorted.sort((a, b) => {
+    if (sortBy === "script_no_asc") {
+      return a.script_no.localeCompare(b.script_no, "ja", { numeric: true });
+    }
+    if (sortBy === "script_no_desc") {
+      return b.script_no.localeCompare(a.script_no, "ja", { numeric: true });
+    }
+    if (sortBy === "start_date_asc") {
+      return a.start_date.localeCompare(b.start_date);
+    }
+    return b.start_date.localeCompare(a.start_date);
+  });
+  return sorted;
+}
+
 export function ScheduleDashboard({
   workspaceId,
   workspaceName,
@@ -340,6 +357,10 @@ export function ScheduleDashboard({
   const [barInteraction, setBarInteraction] = useState<BarInteraction | null>(null);
   const [barPreview, setBarPreview] = useState<Record<string, { startDate: string; endDate: string }>>({});
   const suppressBarClickTaskIdRef = useRef<string | null>(null);
+  const suppressTasksRealtimeUntilRef = useRef(0);
+  const suppressReleaseDatesRealtimeUntilRef = useRef(0);
+  const taskReloadTimerRef = useRef<number | null>(null);
+  const releaseDateReloadTimerRef = useRef<number | null>(null);
 
   const canWrite = role === "admin" || role === "editor";
   const canAdmin = role === "admin";
@@ -380,6 +401,86 @@ export function ScheduleDashboard({
     const rows = await fetchJson<ReleaseDateRow[]>(`/api/release-dates?${params.toString()}`);
     setReleaseDates(rows);
   }, [workspaceId, rangeStart, rangeEnd]);
+
+  const isTaskVisibleInCurrentScope = useCallback(
+    (task: TaskRow) => {
+      if (filters.channelId !== "all" && task.channel_id !== filters.channelId) return false;
+      if (filters.assigneeId !== "all" && task.assignee_id !== filters.assigneeId) return false;
+      if (filters.statusId !== "all" && task.status_id !== filters.statusId) return false;
+      if (filters.taskTypeId !== "all" && task.task_type_id !== filters.taskTypeId) return false;
+      if (task.end_date < rangeStart) return false;
+      if (task.start_date > rangeEnd) return false;
+      return true;
+    },
+    [filters, rangeStart, rangeEnd]
+  );
+
+  const upsertTaskInState = useCallback(
+    (task: TaskRow) => {
+      setTasks((current) => {
+        const without = current.filter((item) => item.id !== task.id);
+        if (!isTaskVisibleInCurrentScope(task)) {
+          return without;
+        }
+        return sortTaskRows([...without, task], sortBy);
+      });
+    },
+    [isTaskVisibleInCurrentScope, sortBy]
+  );
+
+  const removeTaskFromState = useCallback((taskId: string) => {
+    setTasks((current) => current.filter((item) => item.id !== taskId));
+  }, []);
+
+  const isReleaseDateVisibleInRange = useCallback(
+    (row: ReleaseDateRow) => row.release_date >= rangeStart && row.release_date <= rangeEnd,
+    [rangeStart, rangeEnd]
+  );
+
+  const upsertReleaseDateInState = useCallback(
+    (row: ReleaseDateRow) => {
+      setReleaseDates((current) => {
+        const without = current.filter((item) => item.id !== row.id);
+        if (!isReleaseDateVisibleInRange(row)) {
+          return without;
+        }
+        return [...without, row].sort((a, b) => a.release_date.localeCompare(b.release_date));
+      });
+    },
+    [isReleaseDateVisibleInRange]
+  );
+
+  const removeReleaseDateFromState = useCallback((id: string) => {
+    setReleaseDates((current) => current.filter((item) => item.id !== id));
+  }, []);
+
+  const suppressTasksRealtime = useCallback((durationMs = 2000) => {
+    suppressTasksRealtimeUntilRef.current = Date.now() + durationMs;
+  }, []);
+
+  const suppressReleaseDatesRealtime = useCallback((durationMs = 2000) => {
+    suppressReleaseDatesRealtimeUntilRef.current = Date.now() + durationMs;
+  }, []);
+
+  const scheduleTasksReload = useCallback(() => {
+    if (taskReloadTimerRef.current !== null) {
+      window.clearTimeout(taskReloadTimerRef.current);
+    }
+    taskReloadTimerRef.current = window.setTimeout(() => {
+      taskReloadTimerRef.current = null;
+      void loadTasks();
+    }, 150);
+  }, [loadTasks]);
+
+  const scheduleReleaseDatesReload = useCallback(() => {
+    if (releaseDateReloadTimerRef.current !== null) {
+      window.clearTimeout(releaseDateReloadTimerRef.current);
+    }
+    releaseDateReloadTimerRef.current = window.setTimeout(() => {
+      releaseDateReloadTimerRef.current = null;
+      void loadReleaseDates();
+    }, 150);
+  }, [loadReleaseDates]);
 
   const loadMembers = useCallback(async () => {
     const rows = await fetchJson<WorkspaceMember[]>(`/api/members?workspaceId=${workspaceId}`);
@@ -427,6 +528,17 @@ export function ScheduleDashboard({
   }, [sortBy, rangeStart, rangeEnd, filters, refreshBoard]);
 
   useEffect(() => {
+    return () => {
+      if (taskReloadTimerRef.current !== null) {
+        window.clearTimeout(taskReloadTimerRef.current);
+      }
+      if (releaseDateReloadTimerRef.current !== null) {
+        window.clearTimeout(releaseDateReloadTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     const supabase = createClientSupabase();
     const channel = supabase
       .channel(`ws-${workspaceId}`)
@@ -434,14 +546,16 @@ export function ScheduleDashboard({
         "postgres_changes",
         { event: "*", schema: "public", table: "tasks", filter: `workspace_id=eq.${workspaceId}` },
         () => {
-          void loadTasks();
+          if (Date.now() < suppressTasksRealtimeUntilRef.current) return;
+          scheduleTasksReload();
         }
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "release_dates", filter: `workspace_id=eq.${workspaceId}` },
         () => {
-          void loadReleaseDates();
+          if (Date.now() < suppressReleaseDatesRealtimeUntilRef.current) return;
+          scheduleReleaseDatesReload();
         }
       )
       .subscribe();
@@ -449,7 +563,7 @@ export function ScheduleDashboard({
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [workspaceId, loadTasks, loadReleaseDates]);
+  }, [workspaceId, scheduleTasksReload, scheduleReleaseDatesReload]);
 
   useEffect(() => {
     if (!masters.channels.length) return;
@@ -551,7 +665,7 @@ export function ScheduleDashboard({
     const normalizedScriptTitle = createForm.scriptTitle.trim();
 
     try {
-      await fetchJson<TaskRow>("/api/tasks", {
+      const created = await fetchJson<TaskRow>("/api/tasks", {
         method: "POST",
         body: JSON.stringify({
           workspaceId,
@@ -568,7 +682,8 @@ export function ScheduleDashboard({
         })
       });
       closeCreateModal();
-      await loadTasks();
+      suppressTasksRealtime();
+      upsertTaskInState(created);
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : "タスク作成に失敗しました");
     }
@@ -656,6 +771,10 @@ export function ScheduleDashboard({
     }
 
     const parsed = parsedResult.parsed;
+    if (!parsed) {
+      setBulkImportMessage("取り込める行がありません。");
+      return;
+    }
     const blockingErrors = [...parsed.errors];
     const warnings: string[] = [];
     const importPayloads: { lineNo: number; payload: Record<string, unknown> }[] = [];
@@ -758,6 +877,10 @@ export function ScheduleDashboard({
     }
 
     const parsed = parsedResult.parsed;
+    if (!parsed) {
+      setBulkImportMessage("取り込める行がありません。");
+      return;
+    }
     const blockingErrors = [...parsed.errors];
     const warnings: string[] = [];
 
@@ -892,11 +1015,12 @@ export function ScheduleDashboard({
 
   const handlePatchTask = async (taskId: string, patch: Record<string, unknown>) => {
     try {
-      await fetchJson(`/api/tasks/${taskId}`, {
+      const updated = await fetchJson<TaskRow>(`/api/tasks/${taskId}`, {
         method: "PATCH",
         body: JSON.stringify({ workspaceId, ...patch })
       });
-      await loadTasks();
+      suppressTasksRealtime();
+      upsertTaskInState(updated);
       return true;
     } catch (patchError) {
       setError(patchError instanceof Error ? patchError.message : "タスク更新に失敗しました");
@@ -911,7 +1035,8 @@ export function ScheduleDashboard({
       await fetchJson(`/api/tasks/${taskId}?workspaceId=${workspaceId}`, {
         method: "DELETE"
       });
-      await loadTasks();
+      suppressTasksRealtime();
+      removeTaskFromState(taskId);
       return true;
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "タスク削除に失敗しました");
@@ -921,7 +1046,7 @@ export function ScheduleDashboard({
 
   const handleSaveReleaseDate = async () => {
     try {
-      await fetchJson("/api/release-dates", {
+      const saved = await fetchJson<ReleaseDateRow>("/api/release-dates", {
         method: "POST",
         body: JSON.stringify({
           workspaceId,
@@ -932,7 +1057,8 @@ export function ScheduleDashboard({
         })
       });
       setReleaseForm((current) => ({ ...current, scriptNo: "", label: "" }));
-      await loadReleaseDates();
+      suppressReleaseDatesRealtime();
+      upsertReleaseDateInState(saved);
     } catch (releaseError) {
       setError(releaseError instanceof Error ? releaseError.message : "公開日更新に失敗しました");
     }
@@ -940,7 +1066,7 @@ export function ScheduleDashboard({
 
   const handlePatchReleaseDate = async (id: string, patch: { releaseDate?: string; label?: string | null }) => {
     try {
-      await fetchJson("/api/release-dates", {
+      const updated = await fetchJson<ReleaseDateRow>("/api/release-dates", {
         method: "PATCH",
         body: JSON.stringify({
           workspaceId,
@@ -948,7 +1074,8 @@ export function ScheduleDashboard({
           ...patch
         })
       });
-      await loadReleaseDates();
+      suppressReleaseDatesRealtime();
+      upsertReleaseDateInState(updated);
       return true;
     } catch (releaseError) {
       setError(releaseError instanceof Error ? releaseError.message : "公開日更新に失敗しました");
@@ -967,7 +1094,8 @@ export function ScheduleDashboard({
           id
         })
       });
-      await loadReleaseDates();
+      suppressReleaseDatesRealtime();
+      removeReleaseDateFromState(id);
       return true;
     } catch (releaseError) {
       setError(releaseError instanceof Error ? releaseError.message : "公開日削除に失敗しました");
