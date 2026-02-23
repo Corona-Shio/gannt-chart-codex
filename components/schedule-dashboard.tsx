@@ -49,8 +49,9 @@ const TODAY_COLUMN_BG = "#fff1a8";
 const TIMELINE_GRID_BORDER = "#b8b8b8";
 const TOP_PANEL_MIN_HEIGHT = 188;
 const TOP_PANEL_DETAIL_MIN_HEIGHT = 88;
+const UNASSIGNED_ASSIGNEE_GROUP_ID = "__unassigned_assignee__";
 
-type GroupBy = "channel" | "none";
+type GroupBy = "channel" | "assignee" | "none";
 type MasterResource = "channels" | "task_types" | "assignees" | "task_statuses";
 type ViewTab = "schedule" | "masters";
 type MasterTab = "release_dates" | "channels" | "task_types" | "assignees" | "task_statuses" | "members";
@@ -64,6 +65,7 @@ type Filters = {
 
 type CreateDraft = {
   channelId: string;
+  assigneeId: string;
   startDate: string;
   endDate: string;
 };
@@ -137,6 +139,7 @@ type BarInteraction = {
 };
 
 type LaneInteraction = {
+  laneKey: string;
   channelId: string;
   pointerId: number;
   anchorIndex: number;
@@ -587,6 +590,31 @@ export function ScheduleDashboard({
       ];
     }
 
+    if (groupBy === "assignee") {
+      const tasksByAssignee = new Map<string, TaskRow[]>();
+      for (const task of tasks) {
+        const assigneeKey = task.assignee_id ?? UNASSIGNED_ASSIGNEE_GROUP_ID;
+        if (!tasksByAssignee.has(assigneeKey)) {
+          tasksByAssignee.set(assigneeKey, []);
+        }
+        tasksByAssignee.get(assigneeKey)?.push(task);
+      }
+
+      const sortedAssignees = [...masters.assignees].sort((a, b) => a.sort_order - b.sort_order);
+      const assigneeGroups = sortedAssignees.map((assignee) => ({
+        id: assignee.id,
+        name: assignee.display_name,
+        items: tasksByAssignee.get(assignee.id) ?? []
+      }));
+      const unassignedGroup = {
+        id: UNASSIGNED_ASSIGNEE_GROUP_ID,
+        name: "未割当",
+        items: tasksByAssignee.get(UNASSIGNED_ASSIGNEE_GROUP_ID) ?? []
+      };
+
+      return [...assigneeGroups, unassignedGroup];
+    }
+
     const tasksByChannel = new Map<string, TaskRow[]>();
     for (const task of tasks) {
       if (!tasksByChannel.has(task.channel_id)) {
@@ -599,7 +627,7 @@ export function ScheduleDashboard({
     return sortedChannels
       .map((channel) => ({ id: channel.id, name: channel.name, items: tasksByChannel.get(channel.id) ?? [] }))
       .filter((group) => group.items.length > 0 || groupBy === "channel");
-  }, [groupBy, tasks, masters.channels]);
+  }, [groupBy, tasks, masters.channels, masters.assignees]);
 
   const channelIdByName = useMemo(() => {
     return new Map(masters.channels.map((channel) => [channel.name.trim(), channel.id]));
@@ -628,7 +656,7 @@ export function ScheduleDashboard({
       scriptTitle: "",
       taskTypeId: defaultTaskType,
       statusId: defaultStatus,
-      assigneeId: "",
+      assigneeId: draft.assigneeId,
       taskName: "",
       startDate: draft.startDate,
       endDate: draft.endDate,
@@ -1497,6 +1525,7 @@ export function ScheduleDashboard({
                   style={{ marginLeft: 6 }}
                 >
                   <option value="channel">チャンネル</option>
+                  <option value="assignee">担当者</option>
                   <option value="none">なし</option>
                 </select>
               </label>
@@ -1857,7 +1886,7 @@ export function ScheduleDashboard({
             ) : null}
 
             {grouped.map((group) => {
-              const releases = releaseByChannel.get(group.id) ?? [];
+              const releases = groupBy === "channel" ? (releaseByChannel.get(group.id) ?? []) : [];
 
               return (
                 <div key={group.id} style={{ borderBottom: "1px solid var(--line)" }}>
@@ -1884,7 +1913,11 @@ export function ScheduleDashboard({
                       </span>
                     </div>
                     <div style={{ padding: "8px 10px" }} className="muted">
-                      {releases.length ? `${releases.length}件の公開日マーカー` : "公開日マーカーなし"}
+                      {groupBy === "channel"
+                        ? releases.length
+                          ? `${releases.length}件の公開日マーカー`
+                          : "公開日マーカーなし"
+                        : "公開日マーカーはチャンネル単位"}
                     </div>
                   </div>
 
@@ -2151,11 +2184,19 @@ export function ScheduleDashboard({
                       style={{ position: "relative" }}
                       onPointerDown={(event) => {
                         if (!canWrite) return;
+                        const draftChannelId =
+                          groupBy === "channel"
+                            ? group.id
+                            : filters.channelId !== "all"
+                              ? filters.channelId
+                              : (masters.channels[0]?.id ?? "");
+                        if (!draftChannelId) return;
                         const lane = event.currentTarget;
                         const index = indexFromPointer(event, lane);
                         lane.setPointerCapture(event.pointerId);
                         setLaneInteraction({
-                          channelId: group.id,
+                          laneKey: group.id,
+                          channelId: draftChannelId,
                           pointerId: event.pointerId,
                           anchorIndex: index,
                           currentIndex: index
@@ -2175,14 +2216,22 @@ export function ScheduleDashboard({
 
                         const startIndex = Math.min(laneInteraction.anchorIndex, laneInteraction.currentIndex);
                         const endIndex = Math.max(laneInteraction.anchorIndex, laneInteraction.currentIndex);
-                        const channelId =
-                          group.id === "all" ? (masters.channels[0]?.id ?? "") : laneInteraction.channelId;
+                        const assigneeId =
+                          groupBy === "assignee"
+                            ? group.id === UNASSIGNED_ASSIGNEE_GROUP_ID
+                              ? ""
+                              : group.id
+                            : filters.assigneeId === "all"
+                              ? ""
+                              : filters.assigneeId;
+                        const channelId = laneInteraction.channelId;
                         if (!channelId) {
                           setLaneInteraction(null);
                           return;
                         }
                         openCreateModal({
                           channelId,
+                          assigneeId,
                           startDate: timelineDates[startIndex],
                           endDate: timelineDates[endIndex]
                         });
@@ -2210,7 +2259,7 @@ export function ScheduleDashboard({
                           />
                         ))}
 
-                        {laneInteraction && laneInteraction.channelId === group.id ? (
+                        {laneInteraction && laneInteraction.laneKey === group.id ? (
                           <div
                             style={{
                               position: "absolute",
