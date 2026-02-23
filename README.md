@@ -71,3 +71,7 @@ npm run dev
 ```bash
 npm test
 ```
+
+## 開発メモ
+
+- [スケジュール画面レイアウト方針（2026-02-23）](/Users/nakashioyuu/gantt-chart/docs/schedule-viewport-layout.md)
