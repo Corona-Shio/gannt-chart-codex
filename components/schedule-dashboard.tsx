@@ -1429,7 +1429,15 @@ export function ScheduleDashboard({
   return (
     <main
       className="app-shell"
-      style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", alignContent: "start", gap: 14 }}
+      style={{
+        display: "grid",
+        gridTemplateColumns: "minmax(0, 1fr)",
+        gridTemplateRows: viewTab === "schedule" ? "auto minmax(0, 1fr)" : "auto",
+        height: "100dvh",
+        minHeight: 0,
+        alignContent: "stretch",
+        gap: 14
+      }}
     >
       <section className="card" style={{ padding: 16, display: "grid", gap: 12, minWidth: 0 }}>
         <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
@@ -1589,11 +1597,14 @@ export function ScheduleDashboard({
       </section>
 
       {viewTab === "schedule" ? (
-      <section className="card" style={{ overflow: "hidden", minWidth: 0 }}>
+      <section className="card" style={{ overflow: "hidden", minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}>
         <div
           style={{
             overflow: "auto",
-            maxHeight: "68vh",
+            flex: 1,
+            minHeight: 0,
+            scrollbarGutter: "stable",
+            paddingBottom: 12,
             background: "#fff"
           }}
         >
