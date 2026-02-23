@@ -13,7 +13,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchJson } from "@/lib/http";
-import { dateRange } from "@/lib/date";
+import { dateRange, isNonWorkingDay } from "@/lib/date";
 import { buildSortOrderPatches, getNextSortOrder, moveItemByDrop, type DropPosition } from "@/lib/master-order";
 import { createClientSupabase } from "@/lib/supabase/client";
 import type {
@@ -44,6 +44,8 @@ const LEFT_WIDTH =
   TABLE_COLUMN_WIDTHS.reduce((sum, width) => sum + width, 0) + TABLE_GAP * (TABLE_COLUMN_WIDTHS.length - 1) + TABLE_SIDE_PADDING;
 const WEEKDAY_JA = ["日", "月", "火", "水", "木", "金", "土"] as const;
 const RELEASE_ROW_TONES = ["#dfe8f7", "#f0e4d1", "#efe9d7", "#f3e8d7", "#e3ebdd", "#ebe2f2"] as const;
+const NON_WORKING_DAY_BG = "#ececec";
+const TIMELINE_GRID_BORDER = "#b8b8b8";
 
 type GroupBy = "channel" | "none";
 type MasterResource = "channels" | "task_types" | "assignees" | "task_statuses";
@@ -93,6 +95,7 @@ type TimelineDayCell = {
   weekdayLabel: string;
   monthKey: string;
   monthLabel: string;
+  isNonWorkingDay: boolean;
 };
 
 type TimelineMonthGroup = {
@@ -1232,7 +1235,8 @@ export function ScheduleDashboard({
         dayLabel: toDayLabel(date),
         weekdayLabel: toWeekdayLabel(date),
         monthKey: format(parseISO(date), "yyyy-MM"),
-        monthLabel: toMonthLabel(date)
+        monthLabel: toMonthLabel(date),
+        isNonWorkingDay: isNonWorkingDay(date)
       })),
     [timelineDates]
   );
@@ -1673,7 +1677,7 @@ export function ScheduleDashboard({
                         background: row.tone
                       }}
                     >
-                      {timelineDayCells.map((dayCell, dayIndex) => {
+                      {timelineDayCells.map((dayCell) => {
                         const releases = row.placeholder
                           ? []
                           : (releaseBandCellMap.get(`${row.channelId}:${dayCell.date}`) ?? []);
@@ -1867,8 +1871,7 @@ export function ScheduleDashboard({
                         style={{
                           display: "grid",
                           gridTemplateColumns: `${LEFT_WIDTH}px ${totalTimelineWidth}px`,
-                          height: TASK_ROW_HEIGHT,
-                          borderTop: "1px solid #f0eee8"
+                          height: TASK_ROW_HEIGHT
                         }}
                       >
                         <div
@@ -1879,6 +1882,7 @@ export function ScheduleDashboard({
                             padding: "0 10px",
                             gap: TABLE_GAP,
                             borderRight: "1px solid var(--line)",
+                            borderTop: `1px solid ${TIMELINE_GRID_BORDER}`,
                             position: "sticky",
                             left: 0,
                             background: "#fff",
@@ -1942,16 +1946,18 @@ export function ScheduleDashboard({
                           }}
                         >
                           <div style={{ position: "relative", width: totalTimelineWidth, height: TASK_ROW_HEIGHT }}>
-                            {timelineDates.map((date) => (
+                            {timelineDayCells.map((dayCell) => (
                               <div
-                                key={`${task.id}-${date}`}
+                                key={`${task.id}-${dayCell.date}`}
                                 style={{
                                   position: "absolute",
-                                  left: (dateToIndex.get(date) ?? 0) * DAY_WIDTH,
+                                  left: (dateToIndex.get(dayCell.date) ?? 0) * DAY_WIDTH,
                                   top: 0,
                                   bottom: 0,
                                   width: DAY_WIDTH,
-                                  borderLeft: "1px solid #f0eee8"
+                                  borderLeft: `1px solid ${TIMELINE_GRID_BORDER}`,
+                                  borderTop: `1px solid ${TIMELINE_GRID_BORDER}`,
+                                  background: dayCell.isNonWorkingDay ? NON_WORKING_DAY_BG : "transparent"
                                 }}
                               />
                             ))}
@@ -2093,7 +2099,6 @@ export function ScheduleDashboard({
                       display: "grid",
                       gridTemplateColumns: `${LEFT_WIDTH}px ${totalTimelineWidth}px`,
                       height: CREATE_ROW_HEIGHT,
-                      borderTop: "1px dashed var(--line)",
                       background: "#fdfcf8"
                     }}
                   >
@@ -2103,6 +2108,7 @@ export function ScheduleDashboard({
                       fontSize: 11,
                       padding: "4px 10px",
                         borderRight: "1px solid var(--line)",
+                        borderTop: `1px solid ${TIMELINE_GRID_BORDER}`,
                         position: "sticky",
                         left: 0,
                         background: "#fdfcf8",
@@ -2154,16 +2160,18 @@ export function ScheduleDashboard({
                       }}
                     >
                       <div style={{ position: "relative", width: totalTimelineWidth, height: CREATE_ROW_HEIGHT }}>
-                        {timelineDates.map((date) => (
+                        {timelineDayCells.map((dayCell) => (
                           <div
-                            key={`create-${group.id}-${date}`}
+                            key={`create-${group.id}-${dayCell.date}`}
                             style={{
                               position: "absolute",
-                              left: (dateToIndex.get(date) ?? 0) * DAY_WIDTH,
+                              left: (dateToIndex.get(dayCell.date) ?? 0) * DAY_WIDTH,
                               width: DAY_WIDTH,
                               top: 0,
                               bottom: 0,
-                              borderLeft: "1px solid #f3f1ea"
+                              borderLeft: `1px solid ${TIMELINE_GRID_BORDER}`,
+                              borderTop: `1px solid ${TIMELINE_GRID_BORDER}`,
+                              background: dayCell.isNonWorkingDay ? NON_WORKING_DAY_BG : "transparent"
                             }}
                           />
                         ))}
