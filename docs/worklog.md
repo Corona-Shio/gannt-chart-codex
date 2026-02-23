@@ -232,3 +232,28 @@
   - push: 未実施（この記録時点）
 - 次回メモ:
   - 固定開始位置の微調整は `timelineHeaderHeight` の算出値（公開日バンド行高さを含む）を基準に行う。
+
+## 2026-02-23 20:39 JST - マスター管理の公開日を表示範囲に依存させない
+- 背景:
+  - マスター管理の公開日一覧が、スケジュール表示範囲 (`rangeStart` / `rangeEnd`) に連動して欠落する状態だった。
+  - マスター管理では常に全公開日を編集対象として表示する必要があった。
+- 修正方針:
+  - 公開日データは常に全件取得して state に保持する。
+  - スケジュール表示側のみ、描画時に表示範囲でローカル絞り込みする構造に分離する。
+- 実施内容:
+  - `loadReleaseDates` の API パラメータから `rangeStart` / `rangeEnd` を除外し、`workspaceId` のみで取得するよう変更。
+  - `upsertReleaseDateInState` から範囲外レコード除外ロジックを削除し、公開日 state を常に全件保持。
+  - `visibleReleaseDates` に `rangeStart` / `rangeEnd` 条件を追加し、スケジュール描画時だけ範囲内データを利用。
+- 変更ファイル:
+  - `/Users/nakashioyuu/gantt-chart/components/schedule-dashboard.tsx`
+- 検証:
+  - コマンド: `npm test`
+  - 結果: 17 tests passed
+  - コマンド: `npm run lint`
+  - 結果: ESLint warning/error なし
+- Git:
+  - branch: `main`
+  - commit: 未コミット（この記録時点）
+  - push: 未実施（この記録時点）
+- 次回メモ:
+  - 公開日件数が増えた場合は、`ReleaseDateTable` のページングや検索条件追加を検討する。

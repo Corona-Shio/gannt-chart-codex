@@ -541,10 +541,10 @@ export function ScheduleDashboard({
   }, [workspaceId, filters]);
 
   const loadReleaseDates = useCallback(async () => {
-    const params = new URLSearchParams({ workspaceId, rangeStart, rangeEnd });
+    const params = new URLSearchParams({ workspaceId });
     const rows = await fetchJson<ReleaseDateRow[]>(`/api/release-dates?${params.toString()}`);
     setReleaseDates(rows);
-  }, [workspaceId, rangeStart, rangeEnd]);
+  }, [workspaceId]);
 
   const isTaskVisibleWithCurrentFilters = useCallback(
     (task: TaskRow) => {
@@ -574,22 +574,14 @@ export function ScheduleDashboard({
     setTasks((current) => current.filter((item) => item.id !== taskId));
   }, []);
 
-  const isReleaseDateVisibleInRange = useCallback(
-    (row: ReleaseDateRow) => row.release_date >= rangeStart && row.release_date <= rangeEnd,
-    [rangeStart, rangeEnd]
-  );
-
   const upsertReleaseDateInState = useCallback(
     (row: ReleaseDateRow) => {
       setReleaseDates((current) => {
         const without = current.filter((item) => item.id !== row.id);
-        if (!isReleaseDateVisibleInRange(row)) {
-          return without;
-        }
         return [...without, row].sort((a, b) => a.release_date.localeCompare(b.release_date));
       });
     },
-    [isReleaseDateVisibleInRange]
+    []
   );
 
   const removeReleaseDateFromState = useCallback((id: string) => {
@@ -1464,12 +1456,15 @@ export function ScheduleDashboard({
 
   const visibleReleaseDates = useMemo(() => {
     return releaseDates.filter((releaseDate) => {
+      if (releaseDate.release_date < rangeStart || releaseDate.release_date > rangeEnd) {
+        return false;
+      }
       if (filters.channelId !== "all" && releaseDate.channel_id !== filters.channelId) {
         return false;
       }
       return true;
     });
-  }, [releaseDates, filters.channelId]);
+  }, [releaseDates, rangeStart, rangeEnd, filters.channelId]);
 
   const releaseMaxStackByChannel = useMemo(() => {
     const perChannelDateCount = new Map<string, Map<string, number>>();
