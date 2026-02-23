@@ -1738,7 +1738,11 @@ export function ScheduleDashboard({
               style={{
                 display: "grid",
                 gridTemplateColumns: `${LEFT_WIDTH}px ${totalTimelineWidth}px`,
-                borderBottom: "1px solid var(--line)"
+                borderBottom: "1px solid var(--line)",
+                position: "sticky",
+                top: 0,
+                zIndex: 14,
+                background: "var(--panel-muted)"
               }}
             >
               <div
