@@ -2,13 +2,27 @@ import { z } from "zod";
 
 export const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
+const optionalTrimmedString = z.preprocess(
+  (value) => (typeof value === "string" ? value.trim() : value),
+  z.string().optional()
+);
+
+const optionalNonEmptyString = z.preprocess(
+  (value) => {
+    if (typeof value !== "string") return value;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  },
+  z.string().optional()
+);
+
 export const taskCreateSchema = z
   .object({
     workspaceId: z.string().uuid(),
     channelId: z.string().uuid(),
     scriptId: z.string().uuid().optional(),
-    scriptNo: z.string().min(1).optional(),
-    scriptTitle: z.string().optional(),
+    scriptNo: optionalNonEmptyString,
+    scriptTitle: optionalNonEmptyString,
     taskTypeId: z.string().uuid(),
     statusId: z.string().uuid().optional(),
     assigneeId: z.string().uuid().nullable().optional(),
@@ -16,10 +30,6 @@ export const taskCreateSchema = z
     startDate: dateSchema,
     endDate: dateSchema,
     notes: z.string().optional()
-  })
-  .refine((value) => value.scriptId || value.scriptNo, {
-    message: "scriptId or scriptNo is required",
-    path: ["scriptId"]
   })
   .refine((value) => value.startDate <= value.endDate, {
     message: "startDate must be <= endDate",
@@ -31,8 +41,8 @@ export const taskPatchSchema = z
     workspaceId: z.string().uuid(),
     channelId: z.string().uuid().optional(),
     scriptId: z.string().uuid().optional(),
-    scriptNo: z.string().optional(),
-    scriptTitle: z.string().optional(),
+    scriptNo: optionalTrimmedString,
+    scriptTitle: optionalTrimmedString,
     taskTypeId: z.string().uuid().optional(),
     statusId: z.string().uuid().optional(),
     assigneeId: z.string().uuid().nullable().optional(),

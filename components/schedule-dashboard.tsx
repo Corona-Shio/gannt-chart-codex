@@ -136,6 +136,17 @@ type LaneInteraction = {
   currentIndex: number;
 };
 
+type BulkImportRow = {
+  lineNo: number;
+  channelName: string;
+  assigneeName: string;
+  scriptNo: string;
+  taskTypeName: string;
+  taskName: string;
+  startDate: string;
+  endDate: string;
+};
+
 const emptyMasters: MasterState = {
   channels: [],
   taskTypes: [],
@@ -173,6 +184,108 @@ function toWeekdayLabel(dateString: string) {
 function toMonthDayLabel(dateString: string) {
   const parsed = parseISO(dateString);
   return isValid(parsed) ? format(parsed, "M月 d日") : dateString;
+}
+
+function toIsoDateFromInput(input: string, year: number) {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  const matched = trimmed.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
+  if (!matched) return null;
+
+  const month = Number(matched[1]);
+  const day = Number(matched[2]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
+  }
+
+  const parsed = new Date(year, month - 1, day);
+  if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) {
+    return null;
+  }
+
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function parseBulkImportText(rawText: string, year: number) {
+  const rows: BulkImportRow[] = [];
+  const errors: string[] = [];
+
+  const lines = rawText
+    .replaceAll("\r\n", "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const lineNo = index + 1;
+    const columns = line.split("\t").map((column) => column.trim());
+
+    if (columns.length < 7) {
+      errors.push(`行${lineNo}: 列数が不足しています（7列必要）`);
+      continue;
+    }
+
+    const channelName = columns[0] ?? "";
+    const assigneeName = columns[1] ?? "";
+    const scriptNo = columns[2] ?? "";
+    const taskTypeName = columns[3] ?? "";
+    const taskName = columns.slice(4, -2).join("\t").trim();
+    const startRaw = columns.at(-2) ?? "";
+    const endRaw = columns.at(-1) ?? "";
+
+    if (!channelName || !taskTypeName || !taskName) {
+      errors.push(`行${lineNo}: チャンネル・タスク種・タスク名は必須です`);
+      continue;
+    }
+
+    const startDate = toIsoDateFromInput(startRaw, year);
+    const endDate = toIsoDateFromInput(endRaw, year);
+    if (!startDate || !endDate) {
+      errors.push(`行${lineNo}: 日付形式が不正です (${startRaw} / ${endRaw})`);
+      continue;
+    }
+    if (startDate > endDate) {
+      errors.push(`行${lineNo}: 開始日が終了日より後です`);
+      continue;
+    }
+
+    rows.push({
+      lineNo,
+      channelName,
+      assigneeName,
+      scriptNo,
+      taskTypeName,
+      taskName,
+      startDate,
+      endDate
+    });
+  }
+
+  return { rows, errors };
+}
+
+function buildImportTaskKey(input: {
+  channelId: string;
+  taskTypeId: string;
+  taskName: string;
+  startDate: string;
+  endDate: string;
+  scriptNo: string;
+}) {
+  return [
+    input.channelId,
+    input.taskTypeId,
+    input.taskName.trim(),
+    input.startDate,
+    input.endDate,
+    input.scriptNo.trim()
+  ].join("|");
 }
 
 export function ScheduleDashboard({
@@ -217,6 +330,11 @@ export function ScheduleDashboard({
   });
   const [viewTab, setViewTab] = useState<ViewTab>("schedule");
   const [masterTab, setMasterTab] = useState<MasterTab>("release_dates");
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
+  const [bulkImportText, setBulkImportText] = useState("");
+  const [bulkImportYear, setBulkImportYear] = useState(String(now.getFullYear()));
+  const [bulkImportBusy, setBulkImportBusy] = useState(false);
+  const [bulkImportMessage, setBulkImportMessage] = useState("");
 
   const [laneInteraction, setLaneInteraction] = useState<LaneInteraction | null>(null);
   const [barInteraction, setBarInteraction] = useState<BarInteraction | null>(null);
@@ -365,6 +483,18 @@ export function ScheduleDashboard({
       .filter((group) => group.items.length > 0 || groupBy === "channel");
   }, [groupBy, tasks, masters.channels]);
 
+  const channelIdByName = useMemo(() => {
+    return new Map(masters.channels.map((channel) => [channel.name.trim(), channel.id]));
+  }, [masters.channels]);
+
+  const taskTypeIdByName = useMemo(() => {
+    return new Map(masters.taskTypes.map((taskType) => [taskType.name.trim(), taskType.id]));
+  }, [masters.taskTypes]);
+
+  const assigneeIdByName = useMemo(() => {
+    return new Map(masters.assignees.map((assignee) => [assignee.display_name.trim(), assignee.id]));
+  }, [masters.assignees]);
+
   const openCreateModal = (draft: CreateDraft) => {
     const defaultTaskType = masters.taskTypes[0]?.id ?? "";
     const defaultStatus = masters.taskStatuses[0]?.id ?? "";
@@ -417,14 +547,17 @@ export function ScheduleDashboard({
     event.preventDefault();
     if (!createForm) return;
 
+    const normalizedScriptNo = createForm.scriptNo.trim();
+    const normalizedScriptTitle = createForm.scriptTitle.trim();
+
     try {
       await fetchJson<TaskRow>("/api/tasks", {
         method: "POST",
         body: JSON.stringify({
           workspaceId,
           channelId: createForm.channelId,
-          scriptNo: createForm.scriptNo,
-          scriptTitle: createForm.scriptTitle || undefined,
+          scriptNo: normalizedScriptNo || undefined,
+          scriptTitle: normalizedScriptTitle || undefined,
           taskTypeId: createForm.taskTypeId,
           statusId: createForm.statusId,
           assigneeId: createForm.assigneeId || null,
@@ -438,6 +571,322 @@ export function ScheduleDashboard({
       await loadTasks();
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : "タスク作成に失敗しました");
+    }
+  };
+
+  const parseBulkInput = () => {
+    const year = Number(bulkImportYear);
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+      return { error: "年は 2000〜2100 の範囲で指定してください。" };
+    }
+
+    const parsed = parseBulkImportText(bulkImportText, year);
+    if (!parsed.rows.length && parsed.errors.length) {
+      return { error: parsed.errors.join("\n") };
+    }
+    if (!parsed.rows.length) {
+      return { error: "取り込める行がありません。" };
+    }
+
+    return { parsed };
+  };
+
+  const resolveAssigneesForBulkRows = async (rows: BulkImportRow[]) => {
+    const warnings: string[] = [];
+    const errors: string[] = [];
+    const requiredAssigneeNames = Array.from(
+      new Set(
+        rows
+          .map((row) => row.assigneeName.trim())
+          .filter((name) => name.length > 0)
+      )
+    );
+
+    let assigneeMap = new Map(assigneeIdByName);
+    const missingNames = requiredAssigneeNames.filter((name) => !assigneeMap.has(name));
+
+    if (!missingNames.length) {
+      return { assigneeMap, warnings, errors };
+    }
+
+    if (!canAdmin) {
+      errors.push(`未登録の担当者があります: ${missingNames.join(" / ")} (管理者で追加してください)`);
+      return { assigneeMap, warnings, errors };
+    }
+
+    const creationResults = await Promise.allSettled(
+      missingNames.map((name) =>
+        fetchJson<Assignee>("/api/masters/assignees", {
+          method: "POST",
+          body: JSON.stringify({
+            workspaceId,
+            name,
+            sortOrder: 999,
+            isActive: true
+          })
+        })
+      )
+    );
+
+    creationResults.forEach((result, index) => {
+      if (result.status === "fulfilled") return;
+      const name = missingNames[index];
+      const message = result.reason instanceof Error ? result.reason.message : "担当者作成に失敗しました";
+      if (message.includes("duplicate key")) {
+        warnings.push(`担当「${name}」は既に存在しているため再利用します`);
+        return;
+      }
+      errors.push(`担当「${name}」の自動作成に失敗しました: ${message}`);
+    });
+
+    const latestAssignees = await fetchJson<Assignee[]>(`/api/masters/assignees?workspaceId=${workspaceId}`);
+    assigneeMap = new Map(latestAssignees.map((assignee) => [assignee.display_name.trim(), assignee.id]));
+    setMasters((current) => ({ ...current, assignees: latestAssignees }));
+
+    return { assigneeMap, warnings, errors };
+  };
+
+  const handleBulkImportTasks = async () => {
+    if (bulkImportBusy) return;
+
+    const parsedResult = parseBulkInput();
+    if (parsedResult.error) {
+      setBulkImportMessage(parsedResult.error);
+      return;
+    }
+
+    const parsed = parsedResult.parsed;
+    const blockingErrors = [...parsed.errors];
+    const warnings: string[] = [];
+    const importPayloads: { lineNo: number; payload: Record<string, unknown> }[] = [];
+
+    setBulkImportBusy(true);
+    setBulkImportMessage("");
+    try {
+      const assigneeResolution = await resolveAssigneesForBulkRows(parsed.rows);
+      warnings.push(...assigneeResolution.warnings);
+      blockingErrors.push(...assigneeResolution.errors);
+
+      for (const row of parsed.rows) {
+        const channelId = channelIdByName.get(row.channelName.trim());
+        if (!channelId) {
+          blockingErrors.push(`行${row.lineNo}: チャンネル「${row.channelName}」が見つかりません`);
+          continue;
+        }
+
+        const taskTypeId = taskTypeIdByName.get(row.taskTypeName.trim());
+        if (!taskTypeId) {
+          blockingErrors.push(`行${row.lineNo}: タスク種「${row.taskTypeName}」が見つかりません`);
+          continue;
+        }
+
+        let assigneeId: string | null = null;
+        if (row.assigneeName.trim()) {
+          assigneeId = assigneeResolution.assigneeMap.get(row.assigneeName.trim()) ?? null;
+          if (!assigneeId) {
+            blockingErrors.push(`行${row.lineNo}: 担当「${row.assigneeName}」が見つかりません`);
+            continue;
+          }
+        }
+
+        importPayloads.push({
+          lineNo: row.lineNo,
+          payload: {
+            workspaceId,
+            channelId,
+            scriptNo: row.scriptNo.trim() || undefined,
+            taskTypeId,
+            assigneeId,
+            taskName: row.taskName,
+            startDate: row.startDate,
+            endDate: row.endDate
+          }
+        });
+      }
+
+      if (!importPayloads.length) {
+        const details = blockingErrors.length ? blockingErrors.join("\n") : "取り込める行がありません。";
+        setBulkImportMessage(details);
+        return;
+      }
+
+      const results = await Promise.allSettled(
+        importPayloads.map((row) =>
+          fetchJson<TaskRow>("/api/tasks", {
+            method: "POST",
+            body: JSON.stringify(row.payload)
+          })
+        )
+      );
+
+      let successCount = 0;
+      const failed: string[] = [];
+
+      results.forEach((result, index) => {
+        if (result.status === "fulfilled") {
+          successCount += 1;
+          return;
+        }
+        const lineNo = importPayloads[index]?.lineNo;
+        const message = result.reason instanceof Error ? result.reason.message : "登録に失敗しました";
+        failed.push(`行${lineNo}: ${message}`);
+      });
+
+      const summaries = [`追加完了: ${successCount}件 / 失敗: ${failed.length}件`];
+      if (blockingErrors.length) summaries.push(...blockingErrors);
+      if (warnings.length) summaries.push(...warnings);
+      if (failed.length) summaries.push(...failed);
+
+      setBulkImportMessage(summaries.join("\n"));
+      if (successCount > 0) {
+        await loadTasks();
+      }
+    } catch (importError) {
+      setBulkImportMessage(importError instanceof Error ? importError.message : "一括追加に失敗しました");
+    } finally {
+      setBulkImportBusy(false);
+    }
+  };
+
+  const handleBulkAssignToUnassignedTasks = async () => {
+    if (bulkImportBusy) return;
+
+    const parsedResult = parseBulkInput();
+    if (parsedResult.error) {
+      setBulkImportMessage(parsedResult.error);
+      return;
+    }
+
+    const parsed = parsedResult.parsed;
+    const blockingErrors = [...parsed.errors];
+    const warnings: string[] = [];
+
+    setBulkImportBusy(true);
+    setBulkImportMessage("");
+    try {
+      const assigneeResolution = await resolveAssigneesForBulkRows(parsed.rows);
+      warnings.push(...assigneeResolution.warnings);
+      blockingErrors.push(...assigneeResolution.errors);
+
+      const rangeStart = parsed.rows.reduce((min, row) => (row.startDate < min ? row.startDate : min), parsed.rows[0].startDate);
+      const rangeEnd = parsed.rows.reduce((max, row) => (row.endDate > max ? row.endDate : max), parsed.rows[0].endDate);
+
+      const taskParams = new URLSearchParams({
+        workspaceId,
+        sortBy: "start_date_asc",
+        rangeStart,
+        rangeEnd
+      });
+      const candidateTasks = await fetchJson<TaskRow[]>(`/api/tasks?${taskParams.toString()}`);
+      const unassignedTaskIdsByKey = new Map<string, string[]>();
+
+      for (const task of candidateTasks) {
+        if (task.assignee_id !== null) continue;
+        const key = buildImportTaskKey({
+          channelId: task.channel_id,
+          taskTypeId: task.task_type_id,
+          taskName: task.task_name,
+          startDate: task.start_date,
+          endDate: task.end_date,
+          scriptNo: task.script_no
+        });
+        const bucket = unassignedTaskIdsByKey.get(key);
+        if (bucket) {
+          bucket.push(task.id);
+        } else {
+          unassignedTaskIdsByKey.set(key, [task.id]);
+        }
+      }
+
+      const updatePayloads: { lineNo: number; taskId: string; assigneeId: string }[] = [];
+      for (const row of parsed.rows) {
+        const assigneeName = row.assigneeName.trim();
+        if (!assigneeName) continue;
+
+        const channelId = channelIdByName.get(row.channelName.trim());
+        if (!channelId) {
+          blockingErrors.push(`行${row.lineNo}: チャンネル「${row.channelName}」が見つかりません`);
+          continue;
+        }
+
+        const taskTypeId = taskTypeIdByName.get(row.taskTypeName.trim());
+        if (!taskTypeId) {
+          blockingErrors.push(`行${row.lineNo}: タスク種「${row.taskTypeName}」が見つかりません`);
+          continue;
+        }
+
+        const assigneeId = assigneeResolution.assigneeMap.get(assigneeName);
+        if (!assigneeId) {
+          blockingErrors.push(`行${row.lineNo}: 担当「${assigneeName}」が見つかりません`);
+          continue;
+        }
+
+        const key = buildImportTaskKey({
+          channelId,
+          taskTypeId,
+          taskName: row.taskName,
+          startDate: row.startDate,
+          endDate: row.endDate,
+          scriptNo: row.scriptNo
+        });
+        const bucket = unassignedTaskIdsByKey.get(key);
+        const taskId = bucket?.shift();
+        if (!taskId) {
+          blockingErrors.push(`行${row.lineNo}: 一致する未割当タスクが見つかりません`);
+          continue;
+        }
+
+        updatePayloads.push({
+          lineNo: row.lineNo,
+          taskId,
+          assigneeId
+        });
+      }
+
+      if (!updatePayloads.length) {
+        const details = blockingErrors.length ? blockingErrors.join("\n") : "更新対象がありません。";
+        setBulkImportMessage(details);
+        return;
+      }
+
+      const results = await Promise.allSettled(
+        updatePayloads.map((row) =>
+          fetchJson(`/api/tasks/${row.taskId}`, {
+            method: "PATCH",
+            body: JSON.stringify({
+              workspaceId,
+              assigneeId: row.assigneeId
+            })
+          })
+        )
+      );
+
+      let successCount = 0;
+      const failed: string[] = [];
+
+      results.forEach((result, index) => {
+        if (result.status === "fulfilled") {
+          successCount += 1;
+          return;
+        }
+        const lineNo = updatePayloads[index]?.lineNo;
+        const message = result.reason instanceof Error ? result.reason.message : "更新に失敗しました";
+        failed.push(`行${lineNo}: ${message}`);
+      });
+
+      const summaries = [`担当反映完了: ${successCount}件 / 失敗: ${failed.length}件`];
+      if (blockingErrors.length) summaries.push(...blockingErrors);
+      if (warnings.length) summaries.push(...warnings);
+      if (failed.length) summaries.push(...failed);
+
+      setBulkImportMessage(summaries.join("\n"));
+      if (successCount > 0) {
+        await loadTasks();
+      }
+    } catch (error) {
+      setBulkImportMessage(error instanceof Error ? error.message : "担当反映に失敗しました");
+    } finally {
+      setBulkImportBusy(false);
     }
   };
 
@@ -741,8 +1190,8 @@ export function ScheduleDashboard({
 
     const updated = await handlePatchTask(editForm.taskId, {
       channelId: editForm.channelId,
-      scriptNo: editForm.scriptNo,
-      scriptTitle: editForm.scriptTitle || undefined,
+      scriptNo: editForm.scriptNo.trim(),
+      scriptTitle: editForm.scriptTitle.trim() || undefined,
       taskTypeId: editForm.taskTypeId,
       statusId: editForm.statusId,
       assigneeId: editForm.assigneeId || null,
@@ -871,6 +1320,18 @@ export function ScheduleDashboard({
             >
               マスター管理
             </button>
+            {viewTab === "schedule" ? (
+              <button
+                type="button"
+                disabled={!canWrite}
+                onClick={() => {
+                  setBulkImportMessage("");
+                  setBulkImportOpen(true);
+                }}
+              >
+                データ一括追加
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -1785,6 +2246,87 @@ export function ScheduleDashboard({
         </section>
       ) : null}
 
+      {bulkImportOpen ? (
+        <div
+          className="modal-overlay"
+          onClick={(event) => {
+            if (event.target === event.currentTarget && !bulkImportBusy) {
+              setBulkImportOpen(false);
+            }
+          }}
+        >
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleBulkImportTasks();
+            }}
+            className="card modal-panel"
+            style={{ display: "grid", gap: 10, width: 820, maxWidth: "calc(100vw - 32px)" }}
+          >
+            <h3 style={{ margin: 0 }}>データ一括追加（タブ区切り）</h3>
+            <div className="muted" style={{ fontSize: 13 }}>
+              列順: チャンネル / 担当 / 脚本番号(任意) / タスク種 / タスク名 / 開始日 / 終了日
+            </div>
+            <label style={{ display: "grid", gap: 4, width: 180 }}>
+              年（M月D日入力時に使用）
+              <input
+                type="number"
+                min={2000}
+                max={2100}
+                value={bulkImportYear}
+                disabled={bulkImportBusy}
+                onChange={(event) => setBulkImportYear(event.target.value)}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 4 }}>
+              データ
+              <textarea
+                rows={14}
+                value={bulkImportText}
+                disabled={bulkImportBusy}
+                onChange={(event) => setBulkImportText(event.target.value)}
+                placeholder="ペケッツ[TAB]東雲[TAB]755[TAB]イラスト[TAB]タイトル[TAB]1月6日 (火)[TAB]1月10日 (土)"
+              />
+            </label>
+            {bulkImportMessage ? (
+              <pre
+                style={{
+                  margin: 0,
+                  padding: "10px 12px",
+                  border: "1px solid var(--line)",
+                  borderRadius: 8,
+                  background: "#faf9f5",
+                  fontSize: 12,
+                  lineHeight: 1.5,
+                  whiteSpace: "pre-wrap",
+                  maxHeight: 220,
+                  overflow: "auto"
+                }}
+              >
+                {bulkImportMessage}
+              </pre>
+            ) : null}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button type="button" disabled={bulkImportBusy} onClick={() => setBulkImportOpen(false)}>
+                キャンセル
+              </button>
+              <button
+                type="button"
+                disabled={!canWrite || bulkImportBusy}
+                onClick={() => {
+                  void handleBulkAssignToUnassignedTasks();
+                }}
+              >
+                未割当に担当反映
+              </button>
+              <button className="primary" type="submit" disabled={!canWrite || bulkImportBusy}>
+                {bulkImportBusy ? "追加中..." : "一括追加"}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
       {createForm && createDraft ? (
         <div
           className="modal-overlay"
@@ -1816,10 +2358,10 @@ export function ScheduleDashboard({
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <label style={{ display: "grid", gap: 4 }}>
-                脚本番号
+                脚本番号（任意）
                 <input
                   value={createForm.scriptNo}
-                  required
+                  placeholder="空欄可"
                   onChange={(event) =>
                     setCreateForm((current) => (current ? { ...current, scriptNo: event.target.value } : current))
                   }
@@ -1974,10 +2516,10 @@ export function ScheduleDashboard({
               </label>
 
               <label style={{ display: "grid", gap: 4 }}>
-                脚本番号
+                脚本番号（任意）
                 <input
                   value={editForm.scriptNo}
-                  required
+                  placeholder="空欄可"
                   onChange={(event) =>
                     setEditForm((current) => (current ? { ...current, scriptNo: event.target.value } : current))
                   }

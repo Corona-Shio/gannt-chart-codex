@@ -23,13 +23,22 @@ describe("taskCreateSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("requires scriptId or scriptNo", () => {
+  it("accepts payload without scriptId and scriptNo", () => {
     const result = taskCreateSchema.safeParse({
       ...base,
       scriptNo: undefined
     });
 
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts empty scriptNo as optional input", () => {
+    const result = taskCreateSchema.safeParse({
+      ...base,
+      scriptNo: "   "
+    });
+
+    expect(result.success).toBe(true);
   });
 
   it("accepts valid payload", () => {

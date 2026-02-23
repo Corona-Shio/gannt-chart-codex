@@ -9,7 +9,7 @@ type TaskJoinRow = {
   id: string;
   workspace_id: string;
   channel_id: string;
-  script_id: string;
+  script_id: string | null;
   task_type_id: string;
   status_id: string;
   assignee_id: string | null;
@@ -34,19 +34,20 @@ async function ensureScriptId(
   scriptId: string | undefined,
   scriptNo: string | undefined,
   scriptTitle: string | undefined
-): Promise<string> {
+): Promise<string | null> {
   if (scriptId) {
     return scriptId;
   }
-  if (!scriptNo) {
-    throw new Error("scriptNo is required");
+  const normalizedScriptNo = scriptNo?.trim();
+  if (!normalizedScriptNo) {
+    return null;
   }
 
   const { data: existing } = await supabase
     .from("scripts")
     .select("id")
     .eq("workspace_id", workspaceId)
-    .eq("script_no", scriptNo)
+    .eq("script_no", normalizedScriptNo)
     .single();
 
   if (existing) {
@@ -57,7 +58,7 @@ async function ensureScriptId(
     .from("scripts")
     .insert({
       workspace_id: workspaceId,
-      script_no: scriptNo,
+      script_no: normalizedScriptNo,
       title: scriptTitle ?? null
     })
     .select("id")
@@ -210,7 +211,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  let scriptId = payload.scriptId;
+  let scriptId: string | null | undefined = payload.scriptId;
   try {
     scriptId = await ensureScriptId(
       auth.supabase,

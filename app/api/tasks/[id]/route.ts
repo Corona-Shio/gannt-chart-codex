@@ -10,11 +10,12 @@ async function resolveScriptId(
   scriptNo: string,
   scriptTitle?: string
 ) {
+  const normalizedScriptNo = scriptNo.trim();
   const { data: existing } = await supabase
     .from("scripts")
     .select("id")
     .eq("workspace_id", workspaceId)
-    .eq("script_no", scriptNo)
+    .eq("script_no", normalizedScriptNo)
     .single();
 
   if (existing?.id) {
@@ -25,7 +26,7 @@ async function resolveScriptId(
     .from("scripts")
     .insert({
       workspace_id: workspaceId,
-      script_no: scriptNo,
+      script_no: normalizedScriptNo,
       title: scriptTitle ?? null
     })
     .select("id")
@@ -75,12 +76,17 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     return NextResponse.json({ error: "startDate must be <= endDate" }, { status: 400 });
   }
 
-  let resolvedScriptId = payload.scriptId;
-  if (!resolvedScriptId && payload.scriptNo) {
-    try {
-      resolvedScriptId = await resolveScriptId(auth.supabase, payload.workspaceId, payload.scriptNo, payload.scriptTitle);
-    } catch (error) {
-      return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to resolve script" }, { status: 500 });
+  let resolvedScriptId: string | null | undefined = payload.scriptId;
+  if (!resolvedScriptId && payload.scriptNo !== undefined) {
+    const normalizedScriptNo = payload.scriptNo.trim();
+    if (!normalizedScriptNo) {
+      resolvedScriptId = null;
+    } else {
+      try {
+        resolvedScriptId = await resolveScriptId(auth.supabase, payload.workspaceId, normalizedScriptNo, payload.scriptTitle);
+      } catch (error) {
+        return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to resolve script" }, { status: 500 });
+      }
     }
   }
 
@@ -89,7 +95,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   };
 
   if (payload.channelId) updatePayload.channel_id = payload.channelId;
-  if (resolvedScriptId) updatePayload.script_id = resolvedScriptId;
+  if (payload.scriptId !== undefined || payload.scriptNo !== undefined) updatePayload.script_id = resolvedScriptId ?? null;
   if (payload.taskTypeId) updatePayload.task_type_id = payload.taskTypeId;
   if (payload.statusId) updatePayload.status_id = payload.statusId;
   if (payload.assigneeId !== undefined) updatePayload.assignee_id = payload.assigneeId;

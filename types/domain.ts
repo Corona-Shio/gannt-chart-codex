@@ -61,7 +61,7 @@ export interface Task {
   id: string;
   workspace_id: string;
   channel_id: string;
-  script_id: string;
+  script_id: string | null;
   task_type_id: string;
   status_id: string;
   assignee_id: string | null;
