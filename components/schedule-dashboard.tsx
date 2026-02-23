@@ -1805,7 +1805,7 @@ export function ScheduleDashboard({
         {viewTab === "schedule" ? (
           <div style={{ display: "grid", gap: 8, minHeight: TOP_PANEL_DETAIL_MIN_HEIGHT, alignContent: "start" }}>
             <div className="card" style={{ padding: "10px 12px", display: "grid", gap: 8, background: "#fbfcff", borderColor: "#d8dde8" }}>
-              <div style={{ display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <span className="muted" style={{ fontSize: 12, fontWeight: 700 }}>
                   表示開始日
                 </span>
@@ -1839,7 +1839,11 @@ export function ScheduleDashboard({
                 >
                   今年
                 </button>
-                <span className="muted" style={{ fontSize: 12, fontWeight: 700, marginLeft: 2 }}>
+                <span
+                  aria-hidden
+                  style={{ width: 1, height: 18, background: "var(--line-strong)", display: "inline-block", margin: "0 4px" }}
+                />
+                <span className="muted" style={{ fontSize: 12, fontWeight: 700 }}>
                   表示範囲
                 </span>
                 {RANGE_MONTH_OPTIONS.map((option) => (
@@ -1853,12 +1857,20 @@ export function ScheduleDashboard({
                     {option.label}
                   </button>
                 ))}
-                <span className="badge" style={{ fontSize: 11, background: "#eef3fe", borderColor: "#cddaf4" }}>
-                  {rangeStart} ~ {rangeEnd}
+                <span
+                  className="badge"
+                  style={{
+                    fontSize: 11,
+                    background: "#f3f6fc",
+                    borderColor: "#d7dfef",
+                    fontFamily: '"SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace'
+                  }}
+                >
+                  [{rangeStart} - {rangeEnd}]
                 </span>
               </div>
 
-              <div style={{ display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <span className="muted" style={{ fontSize: 12, fontWeight: 700 }}>
                   グルーピング
                 </span>
@@ -1886,29 +1898,32 @@ export function ScheduleDashboard({
                 >
                   チャンネル
                 </button>
-
-                <span className="muted" style={{ fontSize: 12, fontWeight: 700, marginLeft: 6 }}>
-                  並び替え
-                </span>
+                <span
+                  aria-hidden
+                  style={{ width: 1, height: 18, background: "var(--line-strong)", display: "inline-block", margin: "0 4px" }}
+                />
                 <button
                   type="button"
                   className={sortEditorOpen ? "primary" : undefined}
                   onClick={() => setSortEditorOpen((current) => !current)}
                   style={{ padding: "4px 10px", borderRadius: 999, fontSize: 12 }}
                 >
-                  {sortEditorOpen ? "閉じる" : "編集"}
+                  ＋並び替え
                 </button>
                 <span className="badge" style={{ maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {sortSummaryLabel}
                 </span>
-
+                <span
+                  aria-hidden
+                  style={{ width: 1, height: 18, background: "var(--line-strong)", display: "inline-block", margin: "0 4px" }}
+                />
                 <button
                   type="button"
                   className={filterEditorOpen ? "primary" : undefined}
                   onClick={() => setFilterEditorOpen((current) => !current)}
-                  style={{ padding: "4px 10px", borderRadius: 999, fontSize: 12, marginLeft: 6 }}
+                  style={{ padding: "4px 10px", borderRadius: 999, fontSize: 12 }}
                 >
-                  {filterEditorOpen ? "フィルターを閉じる" : "+ フィルター"}
+                  ＋フィルター
                 </button>
                 {activeFilterLabels.length ? (
                   <>
@@ -1926,7 +1941,7 @@ export function ScheduleDashboard({
               </div>
 
               {sortEditorOpen || filterEditorOpen ? (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 8, paddingTop: 2 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 8, paddingTop: 6 }}>
                   {sortEditorOpen ? (
                     <div
                       className="card"
