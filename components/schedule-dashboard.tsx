@@ -1561,7 +1561,7 @@ export function ScheduleDashboard({
                             title={title || undefined}
                             style={{
                               width: DAY_WIDTH,
-                              borderLeft: dayIndex === 0 ? "none" : "1px solid rgba(122, 116, 101, 0.35)",
+                              borderLeft: "1px solid rgba(122, 116, 101, 0.35)",
                               height: row.height,
                               display: "flex",
                               flexDirection: "column",
