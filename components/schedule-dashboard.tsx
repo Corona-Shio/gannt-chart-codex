@@ -1,13 +1,12 @@
 "use client";
 
 import {
-  addDays,
   addMonths,
-  endOfMonth,
   format,
   isValid,
   parseISO,
   startOfMonth,
+  startOfWeek,
   subDays
 } from "date-fns";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -20,7 +19,6 @@ import type {
   Assignee,
   Channel,
   ReleaseDateRow,
-  SortBy,
   TaskRow,
   TaskStatus,
   TaskType,
@@ -50,8 +48,8 @@ const NON_WORKING_DAY_BG = "#ececec";
 const TODAY_COLUMN_BG = "#fff1a8";
 const RELEASE_MATCH_DAY_BG = "#ef6a5a";
 const TIMELINE_GRID_BORDER = "#b8b8b8";
-const TOP_PANEL_MIN_HEIGHT = 188;
-const TOP_PANEL_DETAIL_MIN_HEIGHT = 88;
+const TOP_PANEL_MIN_HEIGHT = 154;
+const TOP_PANEL_DETAIL_MIN_HEIGHT = 72;
 const UNASSIGNED_ASSIGNEE_GROUP_ID = "__unassigned_assignee__";
 const EMPTY_RELEASE_DATE_SET = new Set<string>();
 
@@ -59,6 +57,22 @@ type GroupBy = "channel" | "assignee" | "none";
 type MasterResource = "channels" | "task_types" | "assignees" | "task_statuses";
 type ViewTab = "schedule" | "masters";
 type MasterTab = "release_dates" | "channels" | "task_types" | "assignees" | "task_statuses" | "members";
+type RangeMonths = 3 | 6 | 12;
+type SortField =
+  | "script_no"
+  | "start_date"
+  | "end_date"
+  | "task_name"
+  | "channel_name"
+  | "assignee_name"
+  | "status_name"
+  | "task_type_name";
+type SortDirection = "asc" | "desc";
+type SortRule = {
+  id: string;
+  field: SortField;
+  direction: SortDirection;
+};
 
 type Filters = {
   channelId: string;
@@ -166,6 +180,34 @@ const emptyMasters: MasterState = {
   taskTypes: [],
   taskStatuses: [],
   assignees: []
+};
+
+const RANGE_MONTH_OPTIONS: Array<{ value: RangeMonths; label: string }> = [
+  { value: 3, label: "3ヶ月" },
+  { value: 6, label: "6ヶ月" },
+  { value: 12, label: "1年" }
+];
+
+const SORT_FIELD_OPTIONS: Array<{ value: SortField; label: string }> = [
+  { value: "script_no", label: "脚本番号" },
+  { value: "start_date", label: "開始日" },
+  { value: "end_date", label: "終了日" },
+  { value: "task_name", label: "タスク名" },
+  { value: "channel_name", label: "チャンネル" },
+  { value: "assignee_name", label: "担当者" },
+  { value: "status_name", label: "ステータス" },
+  { value: "task_type_name", label: "タスク種" }
+];
+
+const SORT_FIELD_LABELS: Record<SortField, string> = {
+  script_no: "脚本番号",
+  start_date: "開始日",
+  end_date: "終了日",
+  task_name: "タスク名",
+  channel_name: "チャンネル",
+  assignee_name: "担当者",
+  status_name: "ステータス",
+  task_type_name: "タスク種"
 };
 
 function clamp(value: number, min: number, max: number) {
@@ -307,21 +349,49 @@ function buildImportTaskKey(input: {
   ].join("|");
 }
 
-function sortTaskRows(rows: TaskRow[], sortBy: SortBy): TaskRow[] {
+function createSortRule(field: SortField = "script_no", direction: SortDirection = "asc"): SortRule {
+  const id =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return { id, field, direction };
+}
+
+function compareText(left: string, right: string) {
+  return left.localeCompare(right, "ja", { numeric: true, sensitivity: "base" });
+}
+
+function compareTaskField(left: TaskRow, right: TaskRow, field: SortField) {
+  if (field === "script_no") return compareText(left.script_no, right.script_no);
+  if (field === "start_date") return left.start_date.localeCompare(right.start_date);
+  if (field === "end_date") return left.end_date.localeCompare(right.end_date);
+  if (field === "task_name") return compareText(left.task_name, right.task_name);
+  if (field === "channel_name") return compareText(left.channel_name, right.channel_name);
+  if (field === "assignee_name") return compareText(left.assignee_name ?? "未割当", right.assignee_name ?? "未割当");
+  if (field === "status_name") return compareText(left.status_name, right.status_name);
+  return compareText(left.task_type_name, right.task_type_name);
+}
+
+function sortTaskRows(rows: TaskRow[], sortRules: SortRule[]): TaskRow[] {
+  const rules = sortRules.length
+    ? sortRules
+    : [{ id: "fallback-sort", field: "script_no" as const, direction: "asc" as const }];
   const sorted = [...rows];
   sorted.sort((a, b) => {
-    if (sortBy === "script_no_asc") {
-      return a.script_no.localeCompare(b.script_no, "ja", { numeric: true });
+    for (const rule of rules) {
+      const compared = compareTaskField(a, b, rule.field);
+      if (compared === 0) continue;
+      return rule.direction === "asc" ? compared : -compared;
     }
-    if (sortBy === "script_no_desc") {
-      return b.script_no.localeCompare(a.script_no, "ja", { numeric: true });
-    }
-    if (sortBy === "start_date_asc") {
-      return a.start_date.localeCompare(b.start_date);
-    }
-    return b.start_date.localeCompare(a.start_date);
+    return a.id.localeCompare(b.id);
   });
   return sorted;
+}
+
+function calcRangeEnd(rangeStart: string, months: number) {
+  const startDate = parseISO(rangeStart);
+  if (!isValid(startDate)) return rangeStart;
+  return fmtDate(subDays(addMonths(startDate, months), 1));
 }
 
 export function ScheduleDashboard({
@@ -337,11 +407,15 @@ export function ScheduleDashboard({
 }) {
   const now = useMemo(() => new Date(), []);
   const todayDate = useMemo(() => today(), []);
-  const [rangeStart, setRangeStart] = useState(fmtDate(subDays(startOfMonth(addMonths(now, -1)), 0)));
-  const [rangeEnd, setRangeEnd] = useState(fmtDate(addDays(endOfMonth(addMonths(now, 1)), 0)));
+  const defaultRangeStartDate = useMemo(() => fmtDate(startOfMonth(addMonths(now, -1))), [now]);
+  const sundayStartDate = useMemo(() => fmtDate(startOfWeek(now, { weekStartsOn: 0 })), [now]);
+  const [rangeStart, setRangeStart] = useState(defaultRangeStartDate);
+  const [rangeMonths, setRangeMonths] = useState<RangeMonths>(3);
+  const rangeEnd = useMemo(() => calcRangeEnd(rangeStart, rangeMonths), [rangeStart, rangeMonths]);
 
   const [groupBy, setGroupBy] = useState<GroupBy>("channel");
-  const [sortBy, setSortBy] = useState<SortBy>("script_no_asc");
+  const [sortRules, setSortRules] = useState<SortRule[]>(() => [createSortRule("script_no", "asc")]);
+  const sortRulesRef = useRef<SortRule[]>(sortRules);
   const [filters, setFilters] = useState<Filters>({
     channelId: "all",
     assigneeId: "all",
@@ -372,6 +446,8 @@ export function ScheduleDashboard({
   const [bulkImportYear, setBulkImportYear] = useState(String(now.getFullYear()));
   const [bulkImportBusy, setBulkImportBusy] = useState(false);
   const [bulkImportMessage, setBulkImportMessage] = useState("");
+  const [sortEditorOpen, setSortEditorOpen] = useState(false);
+  const [filterEditorOpen, setFilterEditorOpen] = useState(false);
 
   const [laneInteraction, setLaneInteraction] = useState<LaneInteraction | null>(null);
   const [barInteraction, setBarInteraction] = useState<BarInteraction | null>(null);
@@ -452,8 +528,7 @@ export function ScheduleDashboard({
 
   const loadTasks = useCallback(async () => {
     const params = new URLSearchParams({
-      workspaceId,
-      sortBy
+      workspaceId
     });
 
     if (filters.channelId !== "all") params.set("channelIds", filters.channelId);
@@ -462,8 +537,8 @@ export function ScheduleDashboard({
     if (filters.taskTypeId !== "all") params.set("taskTypeIds", filters.taskTypeId);
 
     const rows = await fetchJson<TaskRow[]>(`/api/tasks?${params.toString()}`);
-    setTasks(rows);
-  }, [workspaceId, sortBy, filters]);
+    setTasks(sortTaskRows(rows, sortRulesRef.current));
+  }, [workspaceId, filters]);
 
   const loadReleaseDates = useCallback(async () => {
     const params = new URLSearchParams({ workspaceId, rangeStart, rangeEnd });
@@ -489,10 +564,10 @@ export function ScheduleDashboard({
         if (!isTaskVisibleWithCurrentFilters(task)) {
           return without;
         }
-        return sortTaskRows([...without, task], sortBy);
+        return sortTaskRows([...without, task], sortRulesRef.current);
       });
     },
-    [isTaskVisibleWithCurrentFilters, sortBy]
+    [isTaskVisibleWithCurrentFilters]
   );
 
   const removeTaskFromState = useCallback((taskId: string) => {
@@ -592,7 +667,12 @@ export function ScheduleDashboard({
 
   useEffect(() => {
     void refreshBoard();
-  }, [sortBy, rangeStart, rangeEnd, filters, refreshBoard]);
+  }, [rangeStart, rangeEnd, filters, refreshBoard]);
+
+  useEffect(() => {
+    sortRulesRef.current = sortRules;
+    setTasks((current) => sortTaskRows(current, sortRules));
+  }, [sortRules]);
 
   useEffect(() => {
     return () => {
@@ -641,6 +721,88 @@ export function ScheduleDashboard({
       setReleaseForm((current) => ({ ...current, channelId: masters.channels[0].id }));
     }
   }, [masters.channels, releaseForm.channelId]);
+
+  const rangeStartPreset: "today" | "week" | "custom" =
+    rangeStart === todayDate ? "today" : rangeStart === sundayStartDate ? "week" : "custom";
+
+  const applyStartPreset = useCallback(
+    (preset: "today" | "week") => {
+      setRangeStart(preset === "today" ? todayDate : sundayStartDate);
+    },
+    [todayDate, sundayStartDate]
+  );
+
+  const addSortRule = useCallback(() => {
+    setSortRules((current) => [...current, createSortRule("start_date", "asc")]);
+  }, []);
+
+  const updateSortRule = useCallback((id: string, patch: Partial<Omit<SortRule, "id">>) => {
+    setSortRules((current) =>
+      current.map((rule) => (rule.id === id ? { ...rule, ...patch } : rule))
+    );
+  }, []);
+
+  const moveSortRule = useCallback((id: string, offset: -1 | 1) => {
+    setSortRules((current) => {
+      const index = current.findIndex((rule) => rule.id === id);
+      if (index < 0) return current;
+      const nextIndex = index + offset;
+      if (nextIndex < 0 || nextIndex >= current.length) return current;
+
+      const next = [...current];
+      const [target] = next.splice(index, 1);
+      next.splice(nextIndex, 0, target);
+      return next;
+    });
+  }, []);
+
+  const removeSortRule = useCallback((id: string) => {
+    setSortRules((current) => {
+      if (current.length === 1) return current;
+      const next = current.filter((rule) => rule.id !== id);
+      return next.length ? next : [createSortRule("script_no", "asc")];
+    });
+  }, []);
+
+  const resetSortRules = useCallback(() => {
+    setSortRules([createSortRule("script_no", "asc")]);
+  }, []);
+
+  const clearFilters = useCallback(() => {
+    setFilters({
+      channelId: "all",
+      assigneeId: "all",
+      statusId: "all",
+      taskTypeId: "all"
+    });
+  }, []);
+
+  const sortSummaryLabel = useMemo(
+    () => sortRules.map((rule) => `${SORT_FIELD_LABELS[rule.field]} ${rule.direction === "asc" ? "↑" : "↓"}`).join(" / "),
+    [sortRules]
+  );
+
+  const activeFilterLabels = useMemo(() => {
+    const labels: string[] = [];
+    if (filters.channelId !== "all") {
+      const channelName = masters.channels.find((channel) => channel.id === filters.channelId)?.name ?? "チャンネル指定";
+      labels.push(`チャンネル: ${channelName}`);
+    }
+    if (filters.assigneeId !== "all") {
+      const assigneeName =
+        masters.assignees.find((assignee) => assignee.id === filters.assigneeId)?.display_name ?? "担当者指定";
+      labels.push(`担当: ${assigneeName}`);
+    }
+    if (filters.statusId !== "all") {
+      const statusName = masters.taskStatuses.find((status) => status.id === filters.statusId)?.name ?? "ステータス指定";
+      labels.push(`ステータス: ${statusName}`);
+    }
+    if (filters.taskTypeId !== "all") {
+      const taskTypeName = masters.taskTypes.find((taskType) => taskType.id === filters.taskTypeId)?.name ?? "タスク種指定";
+      labels.push(`タスク種: ${taskTypeName}`);
+    }
+    return labels;
+  }, [filters, masters.channels, masters.assignees, masters.taskStatuses, masters.taskTypes]);
 
   const grouped = useMemo(() => {
     if (groupBy === "none") {
@@ -1615,109 +1777,283 @@ export function ScheduleDashboard({
 
         {viewTab === "schedule" ? (
           <div style={{ display: "grid", gap: 8, minHeight: TOP_PANEL_DETAIL_MIN_HEIGHT, alignContent: "start" }}>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <label>
-                Group
-                <select
-                  value={groupBy}
-                  onChange={(event) => setGroupBy(event.target.value as GroupBy)}
-                  style={{ marginLeft: 6 }}
-                >
-                  <option value="channel">チャンネル</option>
-                  <option value="assignee">担当者</option>
-                  <option value="none">なし</option>
-                </select>
-              </label>
-              <label>
-                Sort
-                <select
-                  value={sortBy}
-                  onChange={(event) => setSortBy(event.target.value as SortBy)}
-                  style={{ marginLeft: 6 }}
-                >
-                  <option value="script_no_asc">脚本番号 ↑</option>
-                  <option value="script_no_desc">脚本番号 ↓</option>
-                  <option value="start_date_asc">開始日 ↑</option>
-                  <option value="start_date_desc">開始日 ↓</option>
-                </select>
-              </label>
-              <label>
-                期間
+            <div className="card" style={{ padding: "10px 12px", display: "grid", gap: 8, background: "#fbfcff", borderColor: "#d8dde8" }}>
+              <div style={{ display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap" }}>
+                <span className="muted" style={{ fontSize: 12, fontWeight: 700 }}>
+                  表示開始日
+                </span>
                 <input
                   type="date"
                   value={rangeStart}
                   onChange={(event) => setRangeStart(event.target.value)}
-                  style={{ marginLeft: 6 }}
+                  style={{ width: 154, padding: "6px 8px", borderRadius: 7 }}
                 />
-                <span style={{ margin: "0 4px" }}>~</span>
-                <input type="date" value={rangeEnd} onChange={(event) => setRangeEnd(event.target.value)} />
-              </label>
-            </div>
-
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              <label>
-                チャンネル
-                <select
-                  value={filters.channelId}
-                  onChange={(event) => setFilters((current) => ({ ...current, channelId: event.target.value }))}
-                  style={{ marginLeft: 6 }}
+                <button
+                  type="button"
+                  className={rangeStartPreset === "today" ? "primary" : undefined}
+                  onClick={() => applyStartPreset("today")}
+                  style={{ padding: "5px 10px", borderRadius: 999, fontSize: 12 }}
                 >
-                  <option value="all">すべて</option>
-                  {masters.channels.map((channel) => (
-                    <option key={channel.id} value={channel.id}>
-                      {channel.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                担当
-                <select
-                  value={filters.assigneeId}
-                  onChange={(event) => setFilters((current) => ({ ...current, assigneeId: event.target.value }))}
-                  style={{ marginLeft: 6 }}
+                  今日
+                </button>
+                <button
+                  type="button"
+                  className={rangeStartPreset === "week" ? "primary" : undefined}
+                  onClick={() => applyStartPreset("week")}
+                  style={{ padding: "5px 10px", borderRadius: 999, fontSize: 12 }}
                 >
-                  <option value="all">すべて</option>
-                  {masters.assignees.map((assignee) => (
-                    <option key={assignee.id} value={assignee.id}>
-                      {assignee.display_name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  今週
+                </button>
+                <span className="muted" style={{ fontSize: 12, fontWeight: 700, marginLeft: 2 }}>
+                  表示範囲
+                </span>
+                {RANGE_MONTH_OPTIONS.map((option) => (
+                  <button
+                    key={`range-month-${option.value}`}
+                    type="button"
+                    className={rangeMonths === option.value ? "primary" : undefined}
+                    onClick={() => setRangeMonths(option.value)}
+                    style={{ padding: "5px 10px", borderRadius: 999, fontSize: 12 }}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+                <span className="badge" style={{ fontSize: 11, background: "#eef3fe", borderColor: "#cddaf4" }}>
+                  {rangeStart} ~ {rangeEnd}
+                </span>
+              </div>
 
-              <label>
-                ステータス
-                <select
-                  value={filters.statusId}
-                  onChange={(event) => setFilters((current) => ({ ...current, statusId: event.target.value }))}
-                  style={{ marginLeft: 6 }}
+              <div style={{ display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap" }}>
+                <span className="muted" style={{ fontSize: 12, fontWeight: 700 }}>
+                  グルーピング
+                </span>
+                <button
+                  type="button"
+                  className={groupBy === "none" ? "primary" : undefined}
+                  onClick={() => setGroupBy("none")}
+                  style={{ padding: "4px 10px", borderRadius: 999, fontSize: 12 }}
                 >
-                  <option value="all">すべて</option>
-                  {masters.taskStatuses.map((status) => (
-                    <option key={status.id} value={status.id}>
-                      {status.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  なし
+                </button>
+                <button
+                  type="button"
+                  className={groupBy === "assignee" ? "primary" : undefined}
+                  onClick={() => setGroupBy("assignee")}
+                  style={{ padding: "4px 10px", borderRadius: 999, fontSize: 12 }}
+                >
+                  担当者
+                </button>
+                <button
+                  type="button"
+                  className={groupBy === "channel" ? "primary" : undefined}
+                  onClick={() => setGroupBy("channel")}
+                  style={{ padding: "4px 10px", borderRadius: 999, fontSize: 12 }}
+                >
+                  チャンネル
+                </button>
 
-              <label>
-                タスク種
-                <select
-                  value={filters.taskTypeId}
-                  onChange={(event) => setFilters((current) => ({ ...current, taskTypeId: event.target.value }))}
-                  style={{ marginLeft: 6 }}
+                <span className="muted" style={{ fontSize: 12, fontWeight: 700, marginLeft: 6 }}>
+                  並び替え
+                </span>
+                <button
+                  type="button"
+                  className={sortEditorOpen ? "primary" : undefined}
+                  onClick={() => setSortEditorOpen((current) => !current)}
+                  style={{ padding: "4px 10px", borderRadius: 999, fontSize: 12 }}
                 >
-                  <option value="all">すべて</option>
-                  {masters.taskTypes.map((taskType) => (
-                    <option key={taskType.id} value={taskType.id}>
-                      {taskType.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  {sortEditorOpen ? "閉じる" : "編集"}
+                </button>
+                <span className="badge" style={{ maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {sortSummaryLabel}
+                </span>
+
+                <button
+                  type="button"
+                  className={filterEditorOpen ? "primary" : undefined}
+                  onClick={() => setFilterEditorOpen((current) => !current)}
+                  style={{ padding: "4px 10px", borderRadius: 999, fontSize: 12, marginLeft: 6 }}
+                >
+                  {filterEditorOpen ? "フィルターを閉じる" : "+ フィルター"}
+                </button>
+                {activeFilterLabels.length ? (
+                  <>
+                    {activeFilterLabels.map((label) => (
+                      <span key={label} className="badge" style={{ fontSize: 11, background: "#eef3fe", borderColor: "#cddaf4" }}>
+                        {label}
+                      </span>
+                    ))}
+                  </>
+                ) : (
+                  <span className="muted" style={{ fontSize: 12 }}>
+                    フィルターなし
+                  </span>
+                )}
+              </div>
+
+              {sortEditorOpen || filterEditorOpen ? (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 8, paddingTop: 2 }}>
+                  {sortEditorOpen ? (
+                    <div
+                      className="card"
+                      style={{ padding: 9, display: "grid", gap: 6, background: "#f5f8ff", borderColor: "#cdd7ee", alignContent: "start" }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                        <strong style={{ fontSize: 12 }}>並び順を編集</strong>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <button type="button" onClick={addSortRule} style={{ padding: "4px 9px", borderRadius: 8, fontSize: 12 }}>
+                            追加
+                          </button>
+                          <button type="button" onClick={resetSortRules} style={{ padding: "4px 9px", borderRadius: 8, fontSize: 12 }}>
+                            初期化
+                          </button>
+                        </div>
+                      </div>
+                      <div style={{ display: "grid", gap: 5 }}>
+                        {sortRules.map((rule, index) => (
+                          <div
+                            key={rule.id}
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "28px minmax(0, 1fr) 78px auto",
+                              gap: 5,
+                              alignItems: "center"
+                            }}
+                          >
+                            <span className="badge" style={{ justifyContent: "center", padding: "2px 0", fontSize: 11 }}>
+                              {index + 1}
+                            </span>
+                            <select
+                              value={rule.field}
+                              onChange={(event) => updateSortRule(rule.id, { field: event.target.value as SortField })}
+                              style={{ padding: "5px 8px" }}
+                            >
+                              {SORT_FIELD_OPTIONS.map((option) => (
+                                <option key={`sort-field-${option.value}`} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                            <select
+                              value={rule.direction}
+                              onChange={(event) => updateSortRule(rule.id, { direction: event.target.value as SortDirection })}
+                              style={{ padding: "5px 8px" }}
+                            >
+                              <option value="asc">昇順</option>
+                              <option value="desc">降順</option>
+                            </select>
+                            <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                              <button
+                                type="button"
+                                onClick={() => moveSortRule(rule.id, -1)}
+                                disabled={index === 0}
+                                style={{ padding: "3px 8px", fontSize: 12 }}
+                              >
+                                ↑
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => moveSortRule(rule.id, 1)}
+                                disabled={index === sortRules.length - 1}
+                                style={{ padding: "3px 8px", fontSize: 12 }}
+                              >
+                                ↓
+                              </button>
+                              <button
+                                type="button"
+                                className="danger"
+                                onClick={() => removeSortRule(rule.id)}
+                                disabled={sortRules.length === 1}
+                                style={{ padding: "3px 8px", fontSize: 12 }}
+                              >
+                                削除
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {filterEditorOpen ? (
+                    <div
+                      className="card"
+                      style={{ padding: 9, display: "grid", gap: 6, background: "#f5f8ff", borderColor: "#cdd7ee", alignContent: "start" }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                        <strong style={{ fontSize: 12 }}>フィルターを編集</strong>
+                        <button type="button" onClick={clearFilters} style={{ padding: "4px 9px", borderRadius: 8, fontSize: 12 }}>
+                          解除
+                        </button>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 6 }}>
+                        <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
+                          チャンネル
+                          <select
+                            value={filters.channelId}
+                            onChange={(event) => setFilters((current) => ({ ...current, channelId: event.target.value }))}
+                            style={{ padding: "5px 8px" }}
+                          >
+                            <option value="all">すべて</option>
+                            {masters.channels.map((channel) => (
+                              <option key={channel.id} value={channel.id}>
+                                {channel.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
+                          担当
+                          <select
+                            value={filters.assigneeId}
+                            onChange={(event) => setFilters((current) => ({ ...current, assigneeId: event.target.value }))}
+                            style={{ padding: "5px 8px" }}
+                          >
+                            <option value="all">すべて</option>
+                            {masters.assignees.map((assignee) => (
+                              <option key={assignee.id} value={assignee.id}>
+                                {assignee.display_name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
+                          ステータス
+                          <select
+                            value={filters.statusId}
+                            onChange={(event) => setFilters((current) => ({ ...current, statusId: event.target.value }))}
+                            style={{ padding: "5px 8px" }}
+                          >
+                            <option value="all">すべて</option>
+                            {masters.taskStatuses.map((status) => (
+                              <option key={status.id} value={status.id}>
+                                {status.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label style={{ display: "grid", gap: 4, fontSize: 12 }}>
+                          タスク種
+                          <select
+                            value={filters.taskTypeId}
+                            onChange={(event) => setFilters((current) => ({ ...current, taskTypeId: event.target.value }))}
+                            style={{ padding: "5px 8px" }}
+                          >
+                            <option value="all">すべて</option>
+                            {masters.taskTypes.map((taskType) => (
+                              <option key={taskType.id} value={taskType.id}>
+                                {taskType.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </div>
         ) : (
