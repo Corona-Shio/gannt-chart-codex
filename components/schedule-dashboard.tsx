@@ -47,10 +47,12 @@ const WEEKDAY_JA = ["日", "月", "火", "水", "木", "金", "土"] as const;
 const RELEASE_ROW_TONES = ["#dfe8f7", "#f0e4d1", "#efe9d7", "#f3e8d7", "#e3ebdd", "#ebe2f2"] as const;
 const NON_WORKING_DAY_BG = "#ececec";
 const TODAY_COLUMN_BG = "#fff1a8";
+const RELEASE_MATCH_DAY_BG = "#ef6a5a";
 const TIMELINE_GRID_BORDER = "#b8b8b8";
 const TOP_PANEL_MIN_HEIGHT = 188;
 const TOP_PANEL_DETAIL_MIN_HEIGHT = 88;
 const UNASSIGNED_ASSIGNEE_GROUP_ID = "__unassigned_assignee__";
+const EMPTY_RELEASE_DATE_SET = new Set<string>();
 
 type GroupBy = "channel" | "assignee" | "none";
 type MasterResource = "channels" | "task_types" | "assignees" | "task_statuses";
@@ -1402,6 +1404,27 @@ export function ScheduleDashboard({
     return map;
   }, [visibleReleaseDates]);
 
+  const releaseDatesByChannelScript = useMemo(() => {
+    const byScriptId = new Map<string, Set<string>>();
+    const byScriptNo = new Map<string, Set<string>>();
+
+    for (const releaseDate of visibleReleaseDates) {
+      const scriptIdKey = `${releaseDate.channel_id}:${releaseDate.script_id}`;
+      const dateSetById = byScriptId.get(scriptIdKey) ?? new Set<string>();
+      dateSetById.add(releaseDate.release_date);
+      byScriptId.set(scriptIdKey, dateSetById);
+
+      const normalizedScriptNo = releaseDate.script_no.trim();
+      if (!normalizedScriptNo) continue;
+      const scriptNoKey = `${releaseDate.channel_id}:${normalizedScriptNo}`;
+      const dateSetByNo = byScriptNo.get(scriptNoKey) ?? new Set<string>();
+      dateSetByNo.add(releaseDate.release_date);
+      byScriptNo.set(scriptNoKey, dateSetByNo);
+    }
+
+    return { byScriptId, byScriptNo };
+  }, [visibleReleaseDates]);
+
   const releaseBandHeight = releaseBandRows.reduce((sum, row) => sum + row.height, 0);
   const calendarHeaderHeight = MONTH_ROW_HEIGHT + DAY_ROW_HEIGHT + WEEKDAY_ROW_HEIGHT;
   const timelineHeaderHeight = releaseBandHeight + calendarHeaderHeight;
@@ -2010,6 +2033,14 @@ export function ScheduleDashboard({
 
                   {group.items.map((task) => {
                     const range = barRange(task);
+                    const releaseDateSetByScriptId = task.script_id
+                      ? releaseDatesByChannelScript.byScriptId.get(`${task.channel_id}:${task.script_id}`)
+                      : undefined;
+                    const normalizedTaskScriptNo = task.script_no.trim();
+                    const releaseDateSetByScriptNo = normalizedTaskScriptNo
+                      ? releaseDatesByChannelScript.byScriptNo.get(`${task.channel_id}:${normalizedTaskScriptNo}`)
+                      : undefined;
+                    const matchedReleaseDateSet = releaseDateSetByScriptId ?? releaseDateSetByScriptNo ?? EMPTY_RELEASE_DATE_SET;
 
                     return (
                       <div
@@ -2103,35 +2134,16 @@ export function ScheduleDashboard({
                                   width: DAY_WIDTH,
                                   borderLeft: `1px solid ${TIMELINE_GRID_BORDER}`,
                                   borderTop: `1px solid ${TIMELINE_GRID_BORDER}`,
-                                  background: dayCell.isToday
-                                    ? TODAY_COLUMN_BG
-                                    : dayCell.isNonWorkingDay
-                                      ? NON_WORKING_DAY_BG
-                                      : "transparent"
+                                  background: matchedReleaseDateSet.has(dayCell.date)
+                                    ? RELEASE_MATCH_DAY_BG
+                                    : dayCell.isToday
+                                      ? TODAY_COLUMN_BG
+                                      : dayCell.isNonWorkingDay
+                                        ? NON_WORKING_DAY_BG
+                                        : "transparent"
                                 }}
                               />
                             ))}
-
-                            {visibleReleaseDates.map((releaseDate) => {
-                              const markerIndex = dateToIndex.get(releaseDate.release_date);
-                              if (markerIndex === undefined) return null;
-
-                              return (
-                                <div
-                                  key={`marker-row-${task.id}-${releaseDate.id}`}
-                                  title={`${releaseDate.channel_name} / ${releaseDate.script_no} / ${releaseDate.release_date}`}
-                                  style={{
-                                    position: "absolute",
-                                    top: 0,
-                                    bottom: 0,
-                                    left: markerIndex * DAY_WIDTH + DAY_WIDTH / 2,
-                                    width: 1,
-                                    background: releaseDate.channel_id === task.channel_id ? "#bc4f2f" : "#d7c6b9",
-                                    opacity: releaseDate.channel_id === task.channel_id ? 0.7 : 0.25
-                                  }}
-                                />
-                              );
-                            })}
 
                             <div
                               role="button"
