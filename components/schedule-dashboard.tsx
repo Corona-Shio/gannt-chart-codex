@@ -36,7 +36,7 @@ const MONTH_ROW_HEIGHT = DAY_WIDTH;
 const DAY_ROW_HEIGHT = DAY_WIDTH;
 const WEEKDAY_ROW_HEIGHT = DAY_WIDTH;
 const TABLE_GAP = 6;
-const TABLE_SIDE_PADDING = 14;
+const TABLE_SIDE_PADDING = 20;
 const TABLE_COLUMN_WIDTHS = [82, 70, 66, 72, 128, 58, 58, 46] as const;
 const LEFT_GRID_TEMPLATE = TABLE_COLUMN_WIDTHS.map((width) => `${width}px`).join(" ");
 const LEFT_WIDTH =
@@ -1014,6 +1014,7 @@ export function ScheduleDashboard({
                         fontWeight: 700,
                         background: row.tone,
                         borderTop: rowIndex === 0 ? "none" : "1px solid rgba(125, 118, 102, 0.35)",
+                        borderRight: "1px solid var(--line)",
                         color: row.placeholder ? "var(--text-muted)" : "#2d2a23",
                         lineHeight: "14px"
                       }}
@@ -1064,7 +1065,7 @@ export function ScheduleDashboard({
                         background: row.tone
                       }}
                     >
-                      {timelineDayCells.map((dayCell) => {
+                      {timelineDayCells.map((dayCell, dayIndex) => {
                         const releases = row.placeholder
                           ? []
                           : (releaseBandCellMap.get(`${row.channelId}:${dayCell.date}`) ?? []);
@@ -1080,7 +1081,7 @@ export function ScheduleDashboard({
                             title={title || undefined}
                             style={{
                               width: DAY_WIDTH,
-                              borderLeft: "1px solid rgba(122, 116, 101, 0.35)",
+                              borderLeft: dayIndex === 0 ? "none" : "1px solid rgba(122, 116, 101, 0.35)",
                               height: row.height,
                               display: "flex",
                               flexDirection: "column",
