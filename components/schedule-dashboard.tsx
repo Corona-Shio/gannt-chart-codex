@@ -129,8 +129,8 @@ type BarInteraction = {
   taskId: string;
   type: "move" | "resize-start" | "resize-end";
   pointerId: number;
-  baseStart: string;
-  baseEnd: string;
+  baseStartIndex: number;
+  baseEndIndex: number;
   offsetDays: number;
   moved: boolean;
   lastIndex: number;
@@ -390,9 +390,7 @@ export function ScheduleDashboard({
   const loadTasks = useCallback(async () => {
     const params = new URLSearchParams({
       workspaceId,
-      sortBy,
-      rangeStart,
-      rangeEnd
+      sortBy
     });
 
     if (filters.channelId !== "all") params.set("channelIds", filters.channelId);
@@ -402,7 +400,7 @@ export function ScheduleDashboard({
 
     const rows = await fetchJson<TaskRow[]>(`/api/tasks?${params.toString()}`);
     setTasks(rows);
-  }, [workspaceId, sortBy, rangeStart, rangeEnd, filters]);
+  }, [workspaceId, sortBy, filters]);
 
   const loadReleaseDates = useCallback(async () => {
     const params = new URLSearchParams({ workspaceId, rangeStart, rangeEnd });
@@ -410,30 +408,28 @@ export function ScheduleDashboard({
     setReleaseDates(rows);
   }, [workspaceId, rangeStart, rangeEnd]);
 
-  const isTaskVisibleInCurrentScope = useCallback(
+  const isTaskVisibleWithCurrentFilters = useCallback(
     (task: TaskRow) => {
       if (filters.channelId !== "all" && task.channel_id !== filters.channelId) return false;
       if (filters.assigneeId !== "all" && task.assignee_id !== filters.assigneeId) return false;
       if (filters.statusId !== "all" && task.status_id !== filters.statusId) return false;
       if (filters.taskTypeId !== "all" && task.task_type_id !== filters.taskTypeId) return false;
-      if (task.end_date < rangeStart) return false;
-      if (task.start_date > rangeEnd) return false;
       return true;
     },
-    [filters, rangeStart, rangeEnd]
+    [filters]
   );
 
   const upsertTaskInState = useCallback(
     (task: TaskRow) => {
       setTasks((current) => {
         const without = current.filter((item) => item.id !== task.id);
-        if (!isTaskVisibleInCurrentScope(task)) {
+        if (!isTaskVisibleWithCurrentFilters(task)) {
           return without;
         }
         return sortTaskRows([...without, task], sortBy);
       });
     },
-    [isTaskVisibleInCurrentScope, sortBy]
+    [isTaskVisibleWithCurrentFilters, sortBy]
   );
 
   const removeTaskFromState = useCallback((taskId: string) => {
@@ -1348,18 +1344,24 @@ export function ScheduleDashboard({
     const preview = barPreview[task.id];
     const startDate = preview?.startDate ?? task.start_date;
     const endDate = preview?.endDate ?? task.end_date;
-    const startIndex = dateToIndex.get(startDate);
-    const endIndex = dateToIndex.get(endDate);
 
-    if (startIndex === undefined || endIndex === undefined) {
-      const fallbackStart = clamp(dateToIndex.get(task.start_date) ?? 0, 0, timelineDates.length - 1);
-      const fallbackEnd = clamp(dateToIndex.get(task.end_date) ?? fallbackStart, fallbackStart, timelineDates.length - 1);
-      return { startIndex: fallbackStart, endIndex: fallbackEnd, startDate, endDate };
+    if (!timelineDates.length) {
+      return { startIndex: 0, endIndex: 0, startDate, endDate };
     }
 
+    const lastIndex = timelineDates.length - 1;
+    const toIndex = (date: string) => {
+      if (date <= rangeStart) return 0;
+      if (date >= rangeEnd) return lastIndex;
+      return clamp(dateToIndex.get(date) ?? 0, 0, lastIndex);
+    };
+
+    const rawStartIndex = toIndex(startDate);
+    const rawEndIndex = toIndex(endDate);
+
     return {
-      startIndex: clamp(startIndex, 0, timelineDates.length - 1),
-      endIndex: clamp(endIndex, startIndex, timelineDates.length - 1),
+      startIndex: Math.min(rawStartIndex, rawEndIndex),
+      endIndex: Math.max(rawStartIndex, rawEndIndex),
       startDate,
       endDate
     };
@@ -1373,8 +1375,8 @@ export function ScheduleDashboard({
   };
 
   const applyBarPreview = (interaction: BarInteraction, targetIndex: number) => {
-    const baseStartIndex = dateToIndex.get(interaction.baseStart) ?? 0;
-    const baseEndIndex = dateToIndex.get(interaction.baseEnd) ?? baseStartIndex;
+    const baseStartIndex = interaction.baseStartIndex;
+    const baseEndIndex = interaction.baseEndIndex;
     let nextStartIndex = baseStartIndex;
     let nextEndIndex = baseEndIndex;
 
@@ -2025,13 +2027,13 @@ export function ScheduleDashboard({
                                 const index = indexFromPointer(event, lane);
                                 const pointerId = event.pointerId;
                                 lane.setPointerCapture(pointerId);
-                                const offset = index - (dateToIndex.get(range.startDate) ?? index);
+                                const offset = index - range.startIndex;
                                 setBarInteraction({
                                   taskId: task.id,
                                   type: "move",
                                   pointerId,
-                                  baseStart: range.startDate,
-                                  baseEnd: range.endDate,
+                                  baseStartIndex: range.startIndex,
+                                  baseEndIndex: range.endIndex,
                                   offsetDays: offset,
                                   moved: false,
                                   lastIndex: index
@@ -2070,8 +2072,8 @@ export function ScheduleDashboard({
                                     taskId: task.id,
                                     type: "resize-start",
                                     pointerId,
-                                    baseStart: range.startDate,
-                                    baseEnd: range.endDate,
+                                    baseStartIndex: range.startIndex,
+                                    baseEndIndex: range.endIndex,
                                     offsetDays: 0,
                                     moved: false,
                                     lastIndex: index
@@ -2099,8 +2101,8 @@ export function ScheduleDashboard({
                                     taskId: task.id,
                                     type: "resize-end",
                                     pointerId,
-                                    baseStart: range.startDate,
-                                    baseEnd: range.endDate,
+                                    baseStartIndex: range.startIndex,
+                                    baseEndIndex: range.endIndex,
                                     offsetDays: 0,
                                     moved: false,
                                     lastIndex: index
