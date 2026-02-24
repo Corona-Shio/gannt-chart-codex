@@ -28,7 +28,11 @@ import type {
 } from "@/types/domain";
 
 const DAY_WIDTH = 26;
-const MONTH_LABEL_SWITCH_OFFSET = Math.floor(DAY_WIDTH * 1.2);
+const MONTH_END_SWITCH_HIDDEN_RATIO = 0.6;
+const YEAR_MONTH_BADGE_LEFT_INSET = 6;
+const YEAR_MONTH_BADGE_HIDE_PADDING = 20;
+const YEAR_MONTH_FADE_WIDTH = 64;
+const YEAR_MONTH_MASK_HEIGHT = 25;
 const TASK_ROW_HEIGHT = DAY_WIDTH;
 const CREATE_ROW_HEIGHT = DAY_WIDTH;
 const BAR_HEIGHT = Math.max(16, DAY_WIDTH - 8);
@@ -129,6 +133,7 @@ type TimelineDayCell = {
 type TimelineMonthGroup = {
   key: string;
   label: string;
+  yearMonthLabel: string;
   startIndex: number;
   length: number;
 };
@@ -238,6 +243,11 @@ function today() {
 function toMonthLabel(dateString: string) {
   const parsed = parseISO(dateString);
   return isValid(parsed) ? format(parsed, "M月") : dateString;
+}
+
+function toMonthKey(dateString: string) {
+  const parsed = parseISO(dateString);
+  return isValid(parsed) ? format(parsed, "yyyy-MM") : dateString.slice(0, 7);
 }
 
 function toYearMonthLabel(dateString: string) {
@@ -475,9 +485,9 @@ export function ScheduleDashboard({
   const taskReloadTimerRef = useRef<number | null>(null);
   const releaseDateReloadTimerRef = useRef<number | null>(null);
   const scheduleScrollRef = useRef<HTMLDivElement | null>(null);
-  const timelineMonthBadgeRef = useRef<HTMLSpanElement | null>(null);
-  const monthLabelScrollRafRef = useRef<number | null>(null);
-  const pendingMonthLabelScrollLeftRef = useRef(0);
+  const timelineYearMonthBadgeRef = useRef<HTMLSpanElement | null>(null);
+  const monthKeyScrollRafRef = useRef<number | null>(null);
+  const pendingMonthKeyScrollLeftRef = useRef(0);
   const sortEditorContainerRef = useRef<HTMLDivElement | null>(null);
   const sortEditorButtonRef = useRef<HTMLButtonElement | null>(null);
   const filterControlsRef = useRef<HTMLDivElement | null>(null);
@@ -487,43 +497,51 @@ export function ScheduleDashboard({
 
   const timelineDates = useMemo(() => dateRange(rangeStart, rangeEnd), [rangeStart, rangeEnd]);
   const dateToIndex = useMemo(() => new Map(timelineDates.map((date, index) => [date, index])), [timelineDates]);
-  const [visibleMonthLabel, setVisibleMonthLabel] = useState(() => toYearMonthLabel(rangeStart));
+  const [leftVisibleMonthKey, setLeftVisibleMonthKey] = useState(() => toMonthKey(rangeStart));
+  const [yearMonthBadgeWidth, setYearMonthBadgeWidth] = useState(0);
 
-  const syncVisibleMonthLabel = useCallback(
+  const syncLeftVisibleMonthKey = useCallback(
     (rawScrollLeft: number) => {
-      const scrollLeft = Math.max(0, Math.round(rawScrollLeft));
-      const monthBadge = timelineMonthBadgeRef.current;
-      if (monthBadge) {
-        monthBadge.style.left = `${scrollLeft + 6}px`;
-      }
-
       if (!timelineDates.length) {
-        setVisibleMonthLabel(toYearMonthLabel(rangeStart));
+        setLeftVisibleMonthKey(toMonthKey(rangeStart));
         return;
       }
-      const firstVisibleIndex = clamp(
-        Math.floor((scrollLeft + MONTH_LABEL_SWITCH_OFFSET) / DAY_WIDTH),
-        0,
-        timelineDates.length - 1
-      );
-      const nextLabel = toYearMonthLabel(timelineDates[firstVisibleIndex] ?? rangeStart);
-      setVisibleMonthLabel((current) => (current === nextLabel ? current : nextLabel));
+      const scrollLeft = Math.max(0, rawScrollLeft);
+      const firstVisibleIndex = clamp(Math.floor(scrollLeft / DAY_WIDTH), 0, timelineDates.length - 1);
+      const currentMonthKey = toMonthKey(timelineDates[firstVisibleIndex] ?? rangeStart);
+
+      let monthEndIndex = firstVisibleIndex;
+      while (
+        monthEndIndex + 1 < timelineDates.length &&
+        toMonthKey(timelineDates[monthEndIndex + 1] ?? rangeStart) === currentMonthKey
+      ) {
+        monthEndIndex += 1;
+      }
+
+      const scrollLeftDays = scrollLeft / DAY_WIDTH;
+
+      const nextMonthKey =
+        scrollLeftDays >= monthEndIndex + MONTH_END_SWITCH_HIDDEN_RATIO && monthEndIndex + 1 < timelineDates.length
+          ? toMonthKey(timelineDates[monthEndIndex + 1] ?? rangeStart)
+          : currentMonthKey;
+
+      setLeftVisibleMonthKey((current) => (current === nextMonthKey ? current : nextMonthKey));
     },
     [timelineDates, rangeStart]
   );
 
-  const flushMonthLabelScroll = useCallback(() => {
-    monthLabelScrollRafRef.current = null;
-    syncVisibleMonthLabel(pendingMonthLabelScrollLeftRef.current);
-  }, [syncVisibleMonthLabel]);
+  const flushMonthKeyScroll = useCallback(() => {
+    monthKeyScrollRafRef.current = null;
+    syncLeftVisibleMonthKey(pendingMonthKeyScrollLeftRef.current);
+  }, [syncLeftVisibleMonthKey]);
 
   const handleScheduleScroll = useCallback(
     (scrollLeft: number) => {
-      pendingMonthLabelScrollLeftRef.current = scrollLeft;
-      if (monthLabelScrollRafRef.current !== null) return;
-      monthLabelScrollRafRef.current = window.requestAnimationFrame(flushMonthLabelScroll);
+      pendingMonthKeyScrollLeftRef.current = scrollLeft;
+      if (monthKeyScrollRafRef.current !== null) return;
+      monthKeyScrollRafRef.current = window.requestAnimationFrame(flushMonthKeyScroll);
     },
-    [flushMonthLabelScroll]
+    [flushMonthKeyScroll]
   );
 
   useEffect(() => {
@@ -532,8 +550,8 @@ export function ScheduleDashboard({
       handleScheduleScroll(container.scrollLeft);
       return;
     }
-    syncVisibleMonthLabel(0);
-  }, [handleScheduleScroll, syncVisibleMonthLabel]);
+    syncLeftVisibleMonthKey(0);
+  }, [handleScheduleScroll, syncLeftVisibleMonthKey]);
 
   const loadMasters = useCallback(async () => {
     const [channels, taskTypes, taskStatuses, assignees] = await Promise.all([
@@ -730,8 +748,8 @@ export function ScheduleDashboard({
       if (releaseDateReloadTimerRef.current !== null) {
         window.clearTimeout(releaseDateReloadTimerRef.current);
       }
-      if (monthLabelScrollRafRef.current !== null) {
-        window.cancelAnimationFrame(monthLabelScrollRafRef.current);
+      if (monthKeyScrollRafRef.current !== null) {
+        window.cancelAnimationFrame(monthKeyScrollRafRef.current);
       }
     };
   }, []);
@@ -1637,6 +1655,7 @@ export function ScheduleDashboard({
         groups.push({
           key: dayCell.monthKey,
           label: dayCell.monthLabel,
+          yearMonthLabel: toYearMonthLabel(dayCell.date),
           startIndex: index,
           length: 1
         });
@@ -1644,6 +1663,37 @@ export function ScheduleDashboard({
     }
     return groups;
   }, [timelineDayCells]);
+  const visibleYearMonthLabel = useMemo(() => {
+    const activeGroup = timelineMonthGroups.find((group) => group.key === leftVisibleMonthKey);
+    return activeGroup?.yearMonthLabel ?? toYearMonthLabel(rangeStart);
+  }, [timelineMonthGroups, leftVisibleMonthKey, rangeStart]);
+  const yearMonthBadgeCoverWidth = Math.max(
+    64,
+    yearMonthBadgeWidth + YEAR_MONTH_BADGE_HIDE_PADDING + YEAR_MONTH_BADGE_LEFT_INSET
+  );
+  const yearMonthFadeMaskWidth = yearMonthBadgeCoverWidth + YEAR_MONTH_FADE_WIDTH;
+
+  useEffect(() => {
+    const badge = timelineYearMonthBadgeRef.current;
+    if (!badge) return;
+
+    const updateBadgeWidth = () => {
+      const nextWidth = Math.ceil(badge.getBoundingClientRect().width);
+      setYearMonthBadgeWidth((current) => (current === nextWidth ? current : nextWidth));
+    };
+
+    updateBadgeWidth();
+
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      updateBadgeWidth();
+    });
+    observer.observe(badge);
+    return () => {
+      observer.disconnect();
+    };
+  }, [visibleYearMonthLabel]);
+
   const todayBoundaryMarkers = useMemo(() => {
     const todayIndex = timelineDayCells.findIndex((dayCell) => dayCell.isToday);
     if (todayIndex < 0) return null;
@@ -2474,28 +2524,63 @@ export function ScheduleDashboard({
                     borderBottom: "1px solid var(--line)"
                   }}
                 >
-                  <span
-                    ref={timelineMonthBadgeRef}
+                  <div
                     style={{
-                      position: "absolute",
-                      left: 6,
-                      top: 3,
-                      zIndex: 4,
-                      height: MONTH_ROW_HEIGHT - 6,
-                      display: "inline-flex",
+                      position: "sticky",
+                      left: LEFT_WIDTH,
+                      top: 0,
+                      zIndex: 6,
+                      width: 0,
+                      height: MONTH_ROW_HEIGHT,
+                      display: "flex",
                       alignItems: "center",
-                      padding: "0 7px",
-                      borderRadius: 4,
-                      background: "rgba(37, 54, 82, 0.75)",
-                      color: "#f5f8ff",
-                      fontSize: 10,
-                      fontWeight: 700,
-                      lineHeight: "12px",
+                      overflow: "visible",
                       pointerEvents: "none"
                     }}
                   >
-                    {visibleMonthLabel}
-                  </span>
+                    <span
+                      ref={timelineYearMonthBadgeRef}
+                      style={{
+                        height: MONTH_ROW_HEIGHT - 6,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        marginLeft: YEAR_MONTH_BADGE_LEFT_INSET,
+                        padding: "0 7px",
+                        borderRadius: 4,
+                        background: "#253652",
+                        color: "#f5f8ff",
+                        fontSize: 10,
+                        fontWeight: 700,
+                        lineHeight: "12px",
+                        whiteSpace: "nowrap",
+                        boxShadow: "0 1px 2px rgba(0, 0, 0, 0.2)"
+                      }}
+                    >
+                      {visibleYearMonthLabel}
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      position: "sticky",
+                      left: LEFT_WIDTH,
+                      top: 0,
+                      zIndex: 5,
+                      width: 0,
+                      height: YEAR_MONTH_MASK_HEIGHT,
+                      overflow: "visible",
+                      pointerEvents: "none"
+                    }}
+                  >
+                    <span
+                      style={{
+                        display: "block",
+                        width: yearMonthFadeMaskWidth,
+                        height: YEAR_MONTH_MASK_HEIGHT,
+                        background:
+                          `linear-gradient(90deg, rgba(127, 149, 183, 1) 0px, rgba(127, 149, 183, 1) ${yearMonthBadgeCoverWidth}px, rgba(127, 149, 183, 0.82) ${yearMonthBadgeCoverWidth + Math.floor(YEAR_MONTH_FADE_WIDTH * 0.2)}px, rgba(127, 149, 183, 0) ${yearMonthFadeMaskWidth}px)`
+                      }}
+                    />
+                  </div>
                   {timelineMonthGroups.map((monthGroup) => (
                     <div
                       key={`month-group-${monthGroup.key}`}
@@ -2506,17 +2591,26 @@ export function ScheduleDashboard({
                         fontSize: 10,
                         fontWeight: 700,
                         position: "relative",
+                        display: "flex",
+                        alignItems: "center",
                         overflow: "hidden"
                       }}
                     >
                       <span
                         style={{
-                          position: "sticky",
-                          left: 2,
-                          top: 0,
-                          display: "inline-block",
-                          lineHeight: `${MONTH_ROW_HEIGHT}px`,
-                          paddingRight: 4
+                          marginLeft: 6,
+                          height: MONTH_ROW_HEIGHT - 6,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          padding: "0 7px",
+                          borderRadius: 4,
+                          background: "rgba(37, 54, 82, 0.75)",
+                          color: "#f5f8ff",
+                          fontSize: 10,
+                          fontWeight: 700,
+                          lineHeight: "12px",
+                          whiteSpace: "nowrap",
+                          pointerEvents: "none"
                         }}
                       >
                         {monthGroup.label}
