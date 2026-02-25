@@ -363,3 +363,30 @@
   - push: `origin/main` へ反映済み
 - 次回メモ:
   - 切替タイミングは `MONTH_END_SWITCH_HIDDEN_RATIO`、重なり感は `YEAR_MONTH_BADGE_HIDE_PADDING` / `YEAR_MONTH_FADE_WIDTH` / `YEAR_MONTH_MASK_HEIGHT` で即時チューニング可能。
+
+## 2026-02-25 09:41 JST - 公開日マスターCSV取込を3列固定仕様へ変更
+- 背景:
+  - 公開日CSV取込で「取込ボタン位置」と「チャンネル指定位置」が離れており、誤操作しやすい課題があった。
+  - 要件として、CSVは常に `チャンネル名, 脚本番号, YYYY/MM/DD` 形式で受け取り、画面側のチャンネル選択UIを廃止する方針が提示された。
+- 修正方針（理由付き）:
+  - 取込先チャンネルはCSV内データを唯一のソースにし、UI指定との二重管理をなくして操作ミス余地を減らす。
+  - 既存の公開日API (`/api/release-dates`) を再利用し、クライアント側でチャンネル名をIDへ解決して行単位登録する。
+  - 取込時の失敗原因を即時判断できるよう、行番号付きエラーメッセージを維持する。
+- 実施内容（箇条書き）:
+  - `ReleaseDateImportRow` を `channelName/scriptNo/releaseDate` の3列構造へ変更。
+  - 公開日CSVパーサーを3列前提に更新し、ヘッダー検出を `チャンネル/脚本番号/公開日` 系へ変更。
+  - `handleImportReleaseDateCsv` を `csvText` のみ受ける形へ変更し、`channelIdByName` でチャンネル名解決して登録payloadを生成。
+  - 取込先チャンネル選択UIを削除し、公開日マスター上部は「CSV形式の説明 + CSV取込ボタン + 実行結果表示」に整理。
+- 変更ファイル:
+  - `/Users/nakashioyuu/gantt-chart/components/schedule-dashboard.tsx`
+- 検証コマンドと結果:
+  - コマンド: `npm run lint`
+  - 結果: No ESLint warnings or errors
+  - コマンド: `npm test`
+  - 結果: 17 tests passed
+- Git情報（branch / commit / push有無）:
+  - branch: `main`
+  - commit: このコミット
+  - push: このコミットで実施
+- 次回メモ:
+  - チャンネル名の表記ゆれ対策が必要になった場合、CSV取込時に `trim + 全半角統一` など正規化ルールの導入を検討する。

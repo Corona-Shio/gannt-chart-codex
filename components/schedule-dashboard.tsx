@@ -184,6 +184,13 @@ type BulkImportRow = {
   endDate: string;
 };
 
+type ReleaseDateImportRow = {
+  lineNo: number;
+  channelName: string;
+  scriptNo: string;
+  releaseDate: string;
+};
+
 const emptyMasters: MasterState = {
   channels: [],
   taskTypes: [],
@@ -354,6 +361,109 @@ function parseBulkImportText(rawText: string, year: number) {
   return { rows, errors };
 }
 
+function parseCsvLine(line: string) {
+  const columns: string[] = [];
+  let current = "";
+  let quoted = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const nextChar = line[index + 1];
+
+    if (char === '"') {
+      if (quoted && nextChar === '"') {
+        current += '"';
+        index += 1;
+        continue;
+      }
+      quoted = !quoted;
+      continue;
+    }
+
+    if (char === "," && !quoted) {
+      columns.push(current.trim());
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  columns.push(current.trim());
+  return columns;
+}
+
+function toIsoDateFromCsvInput(input: string) {
+  const trimmed = input.trim();
+  const matched = trimmed.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
+  if (!matched) return null;
+
+  const year = Number(matched[1]);
+  const month = Number(matched[2]);
+  const day = Number(matched[3]);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
+    return null;
+  }
+
+  const parsed = new Date(year, month - 1, day);
+  if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) {
+    return null;
+  }
+
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function parseReleaseDateImportCsv(rawText: string) {
+  const rows: ReleaseDateImportRow[] = [];
+  const errors: string[] = [];
+  const lines = rawText.replaceAll("\r\n", "\n").split("\n");
+
+  let parsedRowCount = 0;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const sourceLine = lines[index] ?? "";
+    const line = sourceLine.trim();
+    if (!line) continue;
+
+    const lineNo = index + 1;
+    const columns = parseCsvLine(sourceLine);
+    const channelName = (columns[0]?.trim() ?? "").replace(/^\uFEFF/, "");
+    const scriptNo = columns[1]?.trim() ?? "";
+    const releaseDateInput = columns[2]?.trim() ?? "";
+    const isHeader =
+      parsedRowCount === 0 &&
+      (/チャンネル/i.test(channelName) || /channel/i.test(channelName)) &&
+      (/脚本番号/i.test(scriptNo) || /^script[\s_-]*no$/i.test(scriptNo)) &&
+      (/公開日/i.test(releaseDateInput) || /yyyy/i.test(releaseDateInput) || /date/i.test(releaseDateInput));
+
+    if (isHeader) {
+      continue;
+    }
+
+    parsedRowCount += 1;
+
+    if (!channelName || !scriptNo || !releaseDateInput) {
+      errors.push(`行${lineNo}: 「チャンネル名, 脚本番号, 公開日」の3列が必要です`);
+      continue;
+    }
+
+    const releaseDate = toIsoDateFromCsvInput(releaseDateInput);
+    if (!releaseDate) {
+      errors.push(`行${lineNo}: 公開日の形式が不正です（${releaseDateInput}）`);
+      continue;
+    }
+
+    rows.push({
+      lineNo,
+      channelName,
+      scriptNo,
+      releaseDate
+    });
+  }
+
+  return { rows, errors };
+}
+
 function buildImportTaskKey(input: {
   channelId: string;
   taskTypeId: string;
@@ -471,6 +581,8 @@ export function ScheduleDashboard({
   const [bulkImportYear, setBulkImportYear] = useState(String(now.getFullYear()));
   const [bulkImportBusy, setBulkImportBusy] = useState(false);
   const [bulkImportMessage, setBulkImportMessage] = useState("");
+  const [releaseImportBusy, setReleaseImportBusy] = useState(false);
+  const [releaseImportMessage, setReleaseImportMessage] = useState("");
   const [sortEditorOpen, setSortEditorOpen] = useState(false);
   const [filterAttributePickerOpen, setFilterAttributePickerOpen] = useState(false);
   const [activeFilterFields, setActiveFilterFields] = useState<FilterFieldKey[]>([]);
@@ -1457,6 +1569,87 @@ export function ScheduleDashboard({
       upsertReleaseDateInState(saved);
     } catch (releaseError) {
       setError(releaseError instanceof Error ? releaseError.message : "公開日更新に失敗しました");
+    }
+  };
+
+  const handleImportReleaseDateCsv = async (csvText: string) => {
+    if (releaseImportBusy) return;
+
+    const parsed = parseReleaseDateImportCsv(csvText);
+    if (!parsed.rows.length && parsed.errors.length) {
+      setReleaseImportMessage(parsed.errors.join("\n"));
+      return;
+    }
+    if (!parsed.rows.length) {
+      setReleaseImportMessage("取り込める行がありません。");
+      return;
+    }
+
+    const blockingErrors = [...parsed.errors];
+    const importPayloads: { lineNo: number; channelId: string; scriptNo: string; releaseDate: string }[] = [];
+    for (const row of parsed.rows) {
+      const channelId = channelIdByName.get(row.channelName.trim());
+      if (!channelId) {
+        blockingErrors.push(`行${row.lineNo}: チャンネル「${row.channelName}」が見つかりません`);
+        continue;
+      }
+      importPayloads.push({
+        lineNo: row.lineNo,
+        channelId,
+        scriptNo: row.scriptNo,
+        releaseDate: row.releaseDate
+      });
+    }
+    if (!importPayloads.length) {
+      setReleaseImportMessage(blockingErrors.length ? blockingErrors.join("\n") : "取り込める行がありません。");
+      return;
+    }
+
+    setReleaseImportBusy(true);
+    setReleaseImportMessage("");
+
+    try {
+      const results = await Promise.allSettled(
+        importPayloads.map((row) =>
+          fetchJson<ReleaseDateRow>("/api/release-dates", {
+            method: "POST",
+            body: JSON.stringify({
+              workspaceId,
+              channelId: row.channelId,
+              scriptNo: row.scriptNo,
+              releaseDate: row.releaseDate
+            })
+          })
+        )
+      );
+
+      let successCount = 0;
+      const failed: string[] = [];
+
+      results.forEach((result, index) => {
+        if (result.status === "fulfilled") {
+          successCount += 1;
+          return;
+        }
+
+        const lineNo = importPayloads[index]?.lineNo;
+        const message = result.reason instanceof Error ? result.reason.message : "登録に失敗しました";
+        failed.push(`行${lineNo}: ${message}`);
+      });
+
+      const summaries = [`取込完了: ${successCount}件 / 失敗: ${failed.length}件`];
+      if (blockingErrors.length) summaries.push(...blockingErrors);
+      if (failed.length) summaries.push(...failed);
+
+      setReleaseImportMessage(summaries.join("\n"));
+      if (successCount > 0) {
+        suppressReleaseDatesRealtime();
+        await loadReleaseDates();
+      }
+    } catch (importError) {
+      setReleaseImportMessage(importError instanceof Error ? importError.message : "CSV取込に失敗しました");
+    } finally {
+      setReleaseImportBusy(false);
     }
   };
 
@@ -3289,8 +3482,11 @@ export function ScheduleDashboard({
                 channels={masters.channels}
                 releaseDates={releaseDates}
                 releaseForm={releaseForm}
+                releaseImportBusy={releaseImportBusy}
+                releaseImportMessage={releaseImportMessage}
                 onReleaseFormChange={setReleaseForm}
                 onCreate={handleSaveReleaseDate}
+                onImportCsv={handleImportReleaseDateCsv}
                 onSave={handlePatchReleaseDate}
                 onDelete={handleDeleteReleaseDate}
               />
@@ -3849,8 +4045,11 @@ function ReleaseDateTable({
   channels,
   releaseDates,
   releaseForm,
+  releaseImportBusy,
+  releaseImportMessage,
   onReleaseFormChange,
   onCreate,
+  onImportCsv,
   onSave,
   onDelete
 }: {
@@ -3858,14 +4057,18 @@ function ReleaseDateTable({
   channels: Channel[];
   releaseDates: ReleaseDateRow[];
   releaseForm: ReleaseForm;
+  releaseImportBusy: boolean;
+  releaseImportMessage: string;
   onReleaseFormChange: React.Dispatch<React.SetStateAction<ReleaseForm>>;
   onCreate: () => Promise<void>;
+  onImportCsv: (csvText: string) => Promise<void>;
   onSave: (id: string, patch: { releaseDate?: string; label?: string | null }) => Promise<boolean>;
   onDelete: (id: string) => Promise<boolean>;
 }) {
   const [busy, setBusy] = useState(false);
   const [rowBusyId, setRowBusyId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, { releaseDate: string; label: string }>>({});
+  const csvFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const rows = useMemo(
     () =>
@@ -3883,6 +4086,55 @@ function ReleaseDateTable({
 
   return (
     <div style={{ display: "grid", gap: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <div className="muted" style={{ fontSize: 13 }}>
+          CSV列順: チャンネル名, 脚本番号, YYYY/MM/DD（ヘッダー行あり可）
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <input
+            ref={csvFileInputRef}
+            type="file"
+            accept=".csv,text/csv"
+            style={{ display: "none" }}
+            disabled={!canEdit || releaseImportBusy || busy}
+            onChange={async (event) => {
+              const file = event.target.files?.[0];
+              event.currentTarget.value = "";
+              if (!file) return;
+
+              const csvText = await file.text();
+              await onImportCsv(csvText);
+            }}
+          />
+          <button
+            type="button"
+            disabled={!canEdit || releaseImportBusy || busy}
+            onClick={() => {
+              csvFileInputRef.current?.click();
+            }}
+          >
+            {releaseImportBusy ? "取込中..." : "CSV取込"}
+          </button>
+        </div>
+      </div>
+      {releaseImportMessage ? (
+        <pre
+          style={{
+            margin: 0,
+            padding: "10px 12px",
+            border: "1px solid var(--line)",
+            borderRadius: 8,
+            background: "#faf9f5",
+            fontSize: 12,
+            lineHeight: 1.5,
+            whiteSpace: "pre-wrap",
+            maxHeight: 220,
+            overflow: "auto"
+          }}
+        >
+          {releaseImportMessage}
+        </pre>
+      ) : null}
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 880 }}>
           <thead>
